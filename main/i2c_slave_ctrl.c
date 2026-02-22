@@ -130,7 +130,7 @@ static void i2c_parse_task(void *arg)
                     ESP_LOGW(TAG, "CMD_SET_URL: bad url_len=%u got=%u", url_len, (unsigned)got);
                     break;
                 }
-                if (url_len > MAX_URL_LEN) url_len = MAX_URL_LEN;
+                /* url_len is uint8_t so always fits in MAX_URL_LEN (255) */
                 memcpy(cmd.url, &data[2], url_len);
                 cmd.url[url_len] = '\0';
                 ESP_LOGI(TAG, "CMD_SET_URL: %s", cmd.url);
@@ -197,6 +197,7 @@ esp_err_t i2c_slave_ctrl_init(QueueHandle_t cmd_queue)
 
 void i2c_slave_ctrl_set_status(i2c_player_status_t status, uint8_t volume)
 {
-    /* Atomic byte writes â€“ no mutex needed for reads in ISR */
+    /* Atomic byte writes – no mutex needed for reads in ISR */
     s_status_reply[0] = (uint8_t)status;
     s_status_reply[1] = volume;
+}
