@@ -130,33 +130,63 @@ without sending `0x06` first.
 
 ### Arduino / ESP32 Master Example
 
+> This example targets an Arduino or ESP32 (Arduino framework) acting as I2C master.
+> For a plain ESP32 master, replace `Wire.begin(SDA_PIN, SCL_PIN)` with
+> `i2c_master_init()` from ESP-IDF.
+
 ```cpp
 #include <Wire.h>
 
-#define LYRAT_ADDR 0x42
+// Change these to the SDA/SCL pins of your master board
+#define MASTER_SDA_PIN  21
+#define MASTER_SCL_PIN  22
 
-void setup() {
-    Wire.begin();
-}
+#define LYRAT_ADDR      0x42   // 7-bit I2C address of the LyraT slave
 
-// Play
+// Player status codes returned by lyrat_get_status()
+#define LYRAT_STOPPED   0x00
+#define LYRAT_PLAYING   0x01
+#define LYRAT_PAUSED    0x02
+#define LYRAT_ERROR     0xFF
+
+// -----------------------------------------------------------------------
+// Command helpers
+// -----------------------------------------------------------------------
+
+// CMD_PLAY (0x01) - start or resume playback
 void lyrat_play() {
     Wire.beginTransmission(LYRAT_ADDR);
     Wire.write(0x01);
     Wire.endTransmission();
 }
 
-// Set volume (0-100)
+// CMD_STOP (0x02) - stop playback
+void lyrat_stop() {
+    Wire.beginTransmission(LYRAT_ADDR);
+    Wire.write(0x02);
+    Wire.endTransmission();
+}
+
+// CMD_PAUSE (0x03) - pause playback
+void lyrat_pause() {
+    Wire.beginTransmission(LYRAT_ADDR);
+    Wire.write(0x03);
+    Wire.endTransmission();
+}
+
+// CMD_VOLUME (0x04) - set volume 0 (mute) .. 100 (max)
 void lyrat_set_volume(uint8_t vol) {
+    if (vol > 100) vol = 100;
     Wire.beginTransmission(LYRAT_ADDR);
     Wire.write(0x04);
     Wire.write(vol);
     Wire.endTransmission();
 }
 
-// Set stream URL
+// CMD_SET_URL (0x05) - set HTTP stream URL and start playing immediately
+// url must be a null-terminated ASCII string, max 255 characters
 void lyrat_set_url(const char* url) {
-    uint8_t len = strlen(url);
+    uint8_t len = (uint8_t)strlen(url);
     Wire.beginTransmission(LYRAT_ADDR);
     Wire.write(0x05);
     Wire.write(len);
@@ -164,16 +194,95 @@ void lyrat_set_url(const char* url) {
     Wire.endTransmission();
 }
 
-// Read status
-uint8_t lyrat_get_status(uint8_t *volume) {
+// CMD_STATUS (0x06) - read current status byte and volume
+// Returns: LYRAT_STOPPED / LYRAT_PLAYING / LYRAT_PAUSED / LYRAT_ERROR
+// *volume receives the current volume level (0-100)
+uint8_t lyrat_get_status(uint8_t* volume) {
     Wire.beginTransmission(LYRAT_ADDR);
     Wire.write(0x06);
-    Wire.endTransmission();
-    delay(5);
-    Wire.requestFrom(LYRAT_ADDR, 2);
+    Wire.endTransmission(true);
+
+    delay(5);  // give the LyraT at least 5 ms to prepare the reply
+
+    uint8_t n = Wire.requestFrom((uint8_t)LYRAT_ADDR, (uint8_t)2);
+    if (n < 2) {
+        if (volume) *volume = 0;
+        return LYRAT_ERROR;
+    }
     uint8_t status = Wire.read();
-    *volume = Wire.read();
+    if (volume) *volume = Wire.read();
     return status;
+}
+
+// -----------------------------------------------------------------------
+// Arduino sketch
+// -----------------------------------------------------------------------
+
+void setup() {
+    Serial.begin(115200);
+
+    // For ESP32 boards pass the SDA/SCL pins; for standard Arduino omit them
+    Wire.begin(MASTER_SDA_PIN, MASTER_SCL_PIN);
+    Wire.setClock(400000);   // 400 kHz Fast Mode
+
+    delay(500);  // wait for LyraT to boot
+
+    Serial.println("Connecting to LyraT...");
+
+    // Start with volume at 60 and play the default NPO Radio 2 stream
+    lyrat_set_volume(60);
+    lyrat_play();
+    Serial.println("Play command sent.");
+}
+
+// Status labels for Serial output
+static const char* status_str(uint8_t s) {
+    switch (s) {
+        case LYRAT_STOPPED: return "STOPPED";
+        case LYRAT_PLAYING: return "PLAYING";
+        case LYRAT_PAUSED:  return "PAUSED";
+        default:            return "ERROR";
+    }
+}
+
+void loop() {
+    // Poll status every 5 seconds and print to Serial
+    static uint32_t last_poll = 0;
+    if (millis() - last_poll >= 5000) {
+        last_poll = millis();
+        uint8_t vol;
+        uint8_t st = lyrat_get_status(&vol);
+        Serial.printf("Status: %s  Volume: %u\n", status_str(st), vol);
+    }
+
+    // Example: switch to NPO Radio 1 when 'u' is typed in Serial Monitor
+    if (Serial.available()) {
+        char c = Serial.read();
+        if (c == 'u') {
+            lyrat_set_url("http://icecast.omroep.nl/radio1-bb-mp3");
+            Serial.println("Switched to NPO Radio 1");
+        } else if (c == '2') {
+            lyrat_set_url("http://icecast.omroep.nl/radio2-bb-mp3");
+            Serial.println("Switched to NPO Radio 2");
+        } else if (c == 'p') {
+            lyrat_pause();
+            Serial.println("Paused");
+        } else if (c == 'r') {
+            lyrat_play();
+            Serial.println("Resumed");
+        } else if (c == 's') {
+            lyrat_stop();
+            Serial.println("Stopped");
+        } else if (c == '+') {
+            uint8_t vol;
+            lyrat_get_status(&vol);
+            if (vol <= 90) lyrat_set_volume(vol + 10);
+        } else if (c == '-') {
+            uint8_t vol;
+            lyrat_get_status(&vol);
+            if (vol >= 10) lyrat_set_volume(vol - 10);
+        }
+    }
 }
 ```
 
