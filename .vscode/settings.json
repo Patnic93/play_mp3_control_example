@@ -1,0 +1,8 @@
+{
+    "idf.currentSetup": "C:\\esp\\v5.5.3\\esp-idf",
+    "idf.customExtraVars": {
+        "ADF_PATH": "C:\\esp\\esp-adf"
+    },
+    "idf.flashType": "UART",
+    "idf.portWin": "COM4"
+}
