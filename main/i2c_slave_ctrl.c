@@ -1,17 +1,17 @@
 ﻿/*
- * I2C Slave Controller â€“ implementation  (ESP-IDF I2C Slave Driver V2)
+ * I2C Slave Controller - implementation  (ESP-IDF I2C Slave Driver V2)
  *
  * Receives command frames from a front-end I2C master and pushes
  * parsed i2c_command_t structs onto the audio-task command queue.
  *
- * ISR path  : i2c_rx_cb (on_receive) â†’ xStreamBufferSendFromISR
- * Task path : i2c_parse_task â†’ xQueueSend (cmd_queue)
- * Read path : i2c_request_cb (on_request) â†’ i2c_slave_write (status reply)
+ * ISR path  : i2c_rx_cb (on_receive) -> xStreamBufferSendFromISR
+ * Task path : i2c_parse_task -> xQueueSend (cmd_queue)
+ * Read path : i2c_request_cb (on_request) -> i2c_slave_write (status reply)
  *
  * The master can read the 2-byte status at ANY time (no CMD_STATUS write
  * needed), but sending 0x06 first is recommended for protocol clarity.
  *
- * NOTE: master should insert a â‰¥5 ms delay between writing 0x06 and
+ * NOTE: master should insert a >=5 ms delay between writing 0x06 and
  *       reading 2 bytes, to give the slave time to process.
  */
 
@@ -28,7 +28,7 @@
 
 static const char *TAG = "I2C_SLAVE";
 
-/* â”€â”€ Internal state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* Internal state */
 static i2c_slave_dev_handle_t s_handle;
 static QueueHandle_t          s_cmd_queue;
 
@@ -46,7 +46,7 @@ static StreamBufferHandle_t s_stream;
 static volatile uint8_t  s_status_reply[2] = {PLAYER_STOPPED, 50};
 static SemaphoreHandle_t s_status_mutex;
 
-/* â”€â”€ on_request ISR: master wants to read â†’ send status â”€â”€â”€ */
+/* on_request ISR: master wants to read -> send status */
 static bool IRAM_ATTR i2c_request_cb(i2c_slave_dev_handle_t handle,
                                       const i2c_slave_request_event_data_t *evt,
                                       void *arg)
@@ -54,7 +54,7 @@ static bool IRAM_ATTR i2c_request_cb(i2c_slave_dev_handle_t handle,
     (void)evt;
     BaseType_t woken = pdFALSE;
 
-    /* Copy snapshot of status (no mutex in ISR â€“ reads are atomic on 8-bit) */
+    /* Copy snapshot of status (no mutex in ISR - reads are atomic on 8-bit) */
     uint8_t reply[2] = {s_status_reply[0], s_status_reply[1]};
     uint32_t written = 0;
     i2c_slave_write(handle, reply, sizeof(reply), &written, 0);
@@ -62,7 +62,7 @@ static bool IRAM_ATTR i2c_request_cb(i2c_slave_dev_handle_t handle,
     return woken == pdTRUE;
 }
 
-/* â”€â”€ on_receive ISR: master finished writing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* on_receive ISR: master finished writing */
 static bool IRAM_ATTR i2c_rx_cb(i2c_slave_dev_handle_t handle,
                                   const i2c_slave_rx_done_event_data_t *evt,
                                   void *arg)
@@ -80,7 +80,7 @@ static bool IRAM_ATTR i2c_rx_cb(i2c_slave_dev_handle_t handle,
     return woken == pdTRUE;
 }
 
-/* â”€â”€ Command parse task (normal task context) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* Command parse task (normal task context) */
 static void i2c_parse_task(void *arg)
 {
     uint8_t len_byte;
@@ -106,7 +106,7 @@ static void i2c_parse_task(void *arg)
 
         switch (op) {
 
-            /* â”€â”€ Single-byte commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+            /* Single-byte commands */
             case CMD_PLAY:
             case CMD_STOP:
             case CMD_PAUSE:
@@ -114,7 +114,7 @@ static void i2c_parse_task(void *arg)
                 xQueueSend(s_cmd_queue, &cmd, 0);
                 break;
 
-            /* â”€â”€ Volume: [0x04][vol 0-100] â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+            /* Volume: [0x04][vol 0-100] */
             case CMD_VOLUME:
                 if (got < 2) { ESP_LOGW(TAG, "CMD_VOLUME: short frame"); break; }
                 cmd.volume = (data[1] > 100) ? 100 : data[1];
@@ -122,7 +122,7 @@ static void i2c_parse_task(void *arg)
                 xQueueSend(s_cmd_queue, &cmd, 0);
                 break;
 
-            /* â”€â”€ Set URL: [0x05][len][url...] â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+            /* Set URL: [0x05][len][url...] */
             case CMD_SET_URL: {
                 if (got < 3) { ESP_LOGW(TAG, "CMD_SET_URL: short frame"); break; }
                 uint8_t url_len = data[1];
@@ -138,9 +138,9 @@ static void i2c_parse_task(void *arg)
                 break;
             }
 
-            /* â”€â”€ Status hint (reply is handled by on_request) â”€â”€ */
+            /* Status hint (reply is handled by on_request) */
             case CMD_STATUS:
-                ESP_LOGD(TAG, "CMD_STATUS hint received â€“ reply on next master read");
+                ESP_LOGD(TAG, "CMD_STATUS hint received - reply on next master read");
                 break;
 
             default:
@@ -150,7 +150,7 @@ static void i2c_parse_task(void *arg)
     }
 }
 
-/* â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* Public API */
 
 esp_err_t i2c_slave_ctrl_init(QueueHandle_t cmd_queue)
 {
@@ -197,7 +197,8 @@ esp_err_t i2c_slave_ctrl_init(QueueHandle_t cmd_queue)
 
 void i2c_slave_ctrl_set_status(i2c_player_status_t status, uint8_t volume)
 {
-    /* Atomic byte writes – no mutex needed for reads in ISR */
+    /* Atomic byte writes - no mutex needed for reads in ISR */
     s_status_reply[0] = (uint8_t)status;
     s_status_reply[1] = volume;
 }
+

@@ -103,7 +103,7 @@ static void wifi_init_sta(void)
     }
 }
 
-/* ── I2C command queue (shared between i2c_slave_ctrl and app_main) ── */
+/* -- I2C command queue (shared between i2c_slave_ctrl and app_main) -- */
 static QueueHandle_t s_i2c_cmd_queue;
 
 void app_main(void)
@@ -125,7 +125,7 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
     wifi_init_sta();
 
-    /* Start I2C slave – front-end can now send commands at any time */
+    /* Start I2C slave -- front-end can now send commands at any time */
     ESP_ERROR_CHECK(i2c_slave_ctrl_init(s_i2c_cmd_queue));
 
     ESP_LOGI(TAG, "[ 1 ] Start audio codec chip");
@@ -197,7 +197,7 @@ void app_main(void)
     audio_pipeline_run(pipeline);
 
     while (1) {
-        /* ── Check I2C command queue first (non-blocking) ── */
+        /* -- Check I2C command queue first (non-blocking) -- */
         i2c_command_t i2c_cmd;
         while (xQueueReceive(s_i2c_cmd_queue, &i2c_cmd, 0) == pdTRUE) {
             switch (i2c_cmd.opcode) {
@@ -206,11 +206,11 @@ void app_main(void)
                     if (st == AEL_STATE_PAUSED) {
                         audio_pipeline_resume(pipeline);
                         i2c_slave_ctrl_set_status(PLAYER_PLAYING, (uint8_t)player_volume);
-                        ESP_LOGI(TAG, "[I2C] PLAY – resumed");
+                        ESP_LOGI(TAG, "[I2C] PLAY -- resumed");
                     } else if (st == AEL_STATE_INIT || st == AEL_STATE_FINISHED) {
                         audio_pipeline_run(pipeline);
                         i2c_slave_ctrl_set_status(PLAYER_PLAYING, (uint8_t)player_volume);
-                        ESP_LOGI(TAG, "[I2C] PLAY – started");
+                        ESP_LOGI(TAG, "[I2C] PLAY -- started");
                     }
                     break;
                 }
@@ -254,7 +254,7 @@ void app_main(void)
             }
         }
 
-        /* ── Wait for audio pipeline / peripheral event (50 ms timeout) ── */
+        /* -- Wait for audio pipeline / peripheral event (50 ms timeout) -- */
         audio_event_iface_msg_t msg;
         esp_err_t ret = audio_event_iface_listen(evt, &msg, pdMS_TO_TICKS(50));
         if (ret != ESP_OK) {
