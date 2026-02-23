@@ -144,10 +144,18 @@ void app_main(void)
     http_stream_cfg_t http_cfg = HTTP_STREAM_CFG_DEFAULT();
     http_cfg.type = AUDIO_STREAM_READER;
     http_cfg.enable_playlist_parser = true;
+    /* Large ring buffer absorbs network jitter (~4 s at 128 kbps).
+     * Higher task priority keeps the buffer filled ahead of the decoder. */
+    http_cfg.out_rb_size = 64 * 1024;
+    http_cfg.task_stack  = 6 * 1024;
+    http_cfg.task_prio   = 7;
     http_stream_reader = http_stream_init(&http_cfg);
 
     ESP_LOGI(TAG, "[2.2] Create mp3 decoder");
     mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
+    /* Bigger output buffer smooths the hand-off to the I2S DMA. */
+    mp3_cfg.out_rb_size = 16 * 1024;
+    mp3_cfg.task_prio   = 6;
     mp3_decoder = mp3_decoder_init(&mp3_cfg);
 
     ESP_LOGI(TAG, "[2.3] Create i2s stream to write data to codec chip");
@@ -157,6 +165,8 @@ void app_main(void)
     i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
 #endif
     i2s_cfg.type = AUDIO_STREAM_WRITER;
+    /* Higher I2S task priority prevents audio underruns under CPU load. */
+    i2s_cfg.task_prio = 23;
     i2s_stream_writer = i2s_stream_init(&i2s_cfg);
 
     ESP_LOGI(TAG, "[2.4] Register all elements to audio pipeline");

@@ -25,3 +25,10 @@ CONFIG_PARTITION_TABLE_MD5=y
 # I2C slave driver version 2 (provides received data length in callback)
 CONFIG_I2C_ENABLE_SLAVE_DRIVER_VERSION_2=y
 # end of Partition Table
+
+# TCP/LwIP tuning for smooth audio streaming (128 kbps = ~16 KB/s)
+# Default window of 5760 bytes (~360 ms) drains too fast under jitter.
+CONFIG_LWIP_TCP_WND_DEFAULT=16384
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=16384
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=16
+CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=4096
