@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "play_mp3_control",
-    "project_version":    "3361241-dirty",
+    "project_version":    "e732a68-dirty",
     "project_path":       "C:/Users/patje/Documents/esp/play_mp3_control",
     "idf_path":           "C:/esp/v5.5.3/esp-idf",
     "build_dir":          "C:/Users/patje/Documents/esp/play_mp3_control/build",

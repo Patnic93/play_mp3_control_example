@@ -1,0 +1,1 @@
+Command: cmake -G Ninja -DPYTHON_DEPS_CHECKED=1 -DPYTHON=C:\Espressif\tools\python\v5.5.3\venv\Scripts\python.exe -DESP_PLATFORM=1 -DSDKCONFIG='c:\Users\patje\Documents\esp\play_mp3_control\sdkconfig' -DCCACHE_ENABLE=0 C:\Users\patje\Documents\esp\play_mp3_control

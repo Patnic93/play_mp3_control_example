@@ -1,5 +1,6 @@
 {
-    "idf.currentSetup": "C:\\esp\\v5.5.3\\esp-idf",
+    "idf.currentSetup": "C:\\esp\\esp-adf\\esp-idf",
+    "idf.pythonBinPath": "C:\\Users\\patje\\.espressif\\python_env\\idf5.5_py3.11_env\\Scripts\\python.exe",
     "idf.customExtraVars": {
         "ADF_PATH": "C:\\esp\\esp-adf"
     },
