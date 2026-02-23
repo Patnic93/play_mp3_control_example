@@ -131,3 +131,10 @@
 28	154	7934829209455386	C:/Users/patje/Documents/esp/play_mp3_control/build/bootloader/esp-idf/esptool_py/CMakeFiles/bootloader_check_size	8223ae2109499f30
 81	378	7935663771154200	esp-idf/esptool_py/CMakeFiles/bootloader_check_size	8223ae2109499f30
 81	378	7935663771154200	C:/Users/patje/Documents/esp/play_mp3_control/build/bootloader/esp-idf/esptool_py/CMakeFiles/bootloader_check_size	8223ae2109499f30
+<<<<<<< HEAD
+=======
+21	142	7935665285203834	esp-idf/esptool_py/CMakeFiles/bootloader_check_size	8223ae2109499f30
+21	142	7935665285203834	C:/Users/patje/Documents/esp/play_mp3_control/build/bootloader/esp-idf/esptool_py/CMakeFiles/bootloader_check_size	8223ae2109499f30
+63	598	7935684690723575	esp-idf/esptool_py/CMakeFiles/bootloader_check_size	8223ae2109499f30
+63	598	7935684690723575	C:/Users/patje/Documents/esp/play_mp3_control/build/bootloader/esp-idf/esptool_py/CMakeFiles/bootloader_check_size	8223ae2109499f30
+>>>>>>> e732a6804d7f156e99f5c7b906f98082c23eb91d
