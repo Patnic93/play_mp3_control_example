@@ -5,14 +5,14 @@ menu "Play MP3 Control"
         default PLAY_MP3_CTRL_IFACE_UART
         help
             Select how the external front-end controls the player.
-            UART RX (1-wire) is often more reliable than I2C on LyraT boards
+            UART TX/RX is often more reliable than I2C on LyraT boards
             when only JP7/JTAG pins are accessible.
 
     config PLAY_MP3_CTRL_IFACE_I2C
         bool "I2C slave (addr 0x42)"
 
     config PLAY_MP3_CTRL_IFACE_UART
-        bool "UART RX (1-wire)"
+        bool "UART TX/RX"
 
     endchoice
 
@@ -81,13 +81,20 @@ menu "Play MP3 Control"
             help
                 Baud rate for control UART. Default 115200.
 
+        config PLAY_MP3_UART_TX_GPIO
+            int "UART TX GPIO"
+            default 13
+            range -1 48
+            help
+                GPIO number for UART TX.
+
         config PLAY_MP3_UART_RX_GPIO
             int "UART RX GPIO"
-            default 14
+            default 15
             range -1 48
             help
                 GPIO number for UART RX.
-                Tip (LyraT v4.3): JP7 pin 4 exposes GPIO14 (TMS).
+                Tip (LyraT v4.3): JP7 pin 1 exposes GPIO15 (TDO).
 
         config PLAY_MP3_UART_FRAME_TIMEOUT_MS
             int "Frame timeout (ms)"

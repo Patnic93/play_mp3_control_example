@@ -5302,12 +5302,12 @@
                         "id": "PLAY_MP3_CTRL_IFACE_UART",
                         "name": "PLAY_MP3_CTRL_IFACE_UART",
                         "range": null,
-                        "title": "UART RX (1-wire)",
+                        "title": "UART TX/RX",
                         "type": "bool"
                     }
                 ],
                 "depends_on": null,
-                "help": "Select how the external front-end controls the player.\nUART RX (1-wire) is often more reliable than I2C on LyraT boards\nwhen only JP7/JTAG pins are accessible.",
+                "help": "Select how the external front-end controls the player.\nUART TX/RX is often more reliable than I2C on LyraT boards\nwhen only JP7/JTAG pins are accessible.",
                 "id": "play-mp3-control-control-interface",
                 "name": "PLAY_MP3_CTRL_IFACE",
                 "title": "Control interface",
@@ -5421,7 +5421,20 @@
                     {
                         "children": [],
                         "depends_on": "PLAY_MP3_CTRL_IFACE_UART",
-                        "help": "GPIO number for UART RX.\nTip (LyraT v4.3): JP7 pin 4 exposes GPIO14 (TMS).",
+                        "help": "GPIO number for UART TX.",
+                        "id": "PLAY_MP3_UART_TX_GPIO",
+                        "name": "PLAY_MP3_UART_TX_GPIO",
+                        "range": [
+                            -1,
+                            48
+                        ],
+                        "title": "UART TX GPIO",
+                        "type": "int"
+                    },
+                    {
+                        "children": [],
+                        "depends_on": "PLAY_MP3_CTRL_IFACE_UART",
+                        "help": "GPIO number for UART RX.\nTip (LyraT v4.3): JP7 pin 1 exposes GPIO15 (TDO).",
                         "id": "PLAY_MP3_UART_RX_GPIO",
                         "name": "PLAY_MP3_UART_RX_GPIO",
                         "range": [

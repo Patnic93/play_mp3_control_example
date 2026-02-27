@@ -1,8 +1,12 @@
 /*
- * UART Control - receive-only command interface
+ * UART Control - bidirectional command interface
  *
- * This provides a simple, robust alternative to I2C when only JP7/JTAG pins are accessible
- * or when the I2C bus is unreliable due to board pin muxing.
+ * Protocol (binary, length-prefixed):
+ *   [len:uint8][payload:len bytes]
+ * Where payload matches the same opcode frames used by the I2C control interface.
+ *
+ * Reply (device -> host):
+ *   On CMD_STATUS, device sends: [len=3][0x06][status:uint8][volume:uint8]
  */
 
 #include "uart_ctrl.h"
@@ -13,6 +17,8 @@
 #include "driver/gpio.h"
 #include "esp_check.h"
 #include "esp_log.h"
+
+#include "freertos/semphr.h"
 
 #include <string.h>
 
@@ -32,10 +38,16 @@ static const char *TAG = "UART_CTRL";
 #define UART_CTRL_BAUD           (115200)
 #endif
 
+#if defined(CONFIG_PLAY_MP3_UART_TX_GPIO)
+#define UART_CTRL_TX_GPIO        (CONFIG_PLAY_MP3_UART_TX_GPIO)
+#else
+#define UART_CTRL_TX_GPIO        (13)
+#endif
+
 #if defined(CONFIG_PLAY_MP3_UART_RX_GPIO)
 #define UART_CTRL_RX_GPIO        (CONFIG_PLAY_MP3_UART_RX_GPIO)
 #else
-#define UART_CTRL_RX_GPIO        (14)
+#define UART_CTRL_RX_GPIO        (15)
 #endif
 
 #if defined(CONFIG_PLAY_MP3_UART_FRAME_TIMEOUT_MS)
@@ -45,8 +57,42 @@ static const char *TAG = "UART_CTRL";
 #endif
 
 static QueueHandle_t s_cmd_queue;
+static SemaphoreHandle_t s_tx_mutex;
+
+/* Status reply bytes: [0]=player_status, [1]=volume */
+static volatile uint8_t s_status_reply[2] = {PLAYER_STOPPED, 50};
 
 static void uart_rx_task(void *arg);
+
+static esp_err_t uart_ctrl_send_frame(const uint8_t *payload, size_t len)
+{
+    if (!payload || len == 0 || len > 255) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (s_tx_mutex) {
+        xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
+    }
+
+    uint8_t len_byte = (uint8_t)len;
+    int w0 = uart_write_bytes(UART_CTRL_PORT, (const char *)&len_byte, 1);
+    int w1 = uart_write_bytes(UART_CTRL_PORT, (const char *)payload, len);
+
+    if (s_tx_mutex) {
+        xSemaphoreGive(s_tx_mutex);
+    }
+
+    if (w0 != 1 || w1 != (int)len) {
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+void uart_ctrl_set_status(uint8_t status, uint8_t volume)
+{
+    s_status_reply[0] = status;
+    s_status_reply[1] = volume;
+}
 
 static void parse_and_enqueue(const uint8_t *data, size_t len)
 {
@@ -83,9 +129,6 @@ static void parse_and_enqueue(const uint8_t *data, size_t len)
             ESP_LOGW(TAG, "CMD_SET_URL: bad url_len=%u len=%u", (unsigned)url_len, (unsigned)len);
             break;
         }
-        if (url_len > MAX_URL_LEN) {
-            url_len = MAX_URL_LEN;
-        }
         memcpy(cmd.url, &data[2], url_len);
         cmd.url[url_len] = '\0';
         (void)xQueueSend(s_cmd_queue, &cmd, 0);
@@ -93,8 +136,10 @@ static void parse_and_enqueue(const uint8_t *data, size_t len)
     }
 
     case CMD_STATUS:
-        /* No reply channel in 1-wire RX mode. */
-        ESP_LOGI(TAG, "CMD_STATUS received (ignored in UART RX mode)");
+        {
+            uint8_t reply[3] = {CMD_STATUS, s_status_reply[0], s_status_reply[1]};
+            (void)uart_ctrl_send_frame(reply, sizeof(reply));
+        }
         break;
 
     default:
@@ -112,14 +157,19 @@ esp_err_t uart_ctrl_init(QueueHandle_t cmd_queue)
 
     ESP_LOGW(TAG, "UART control init starting...");
 
-    /*
-     * Force-release GPIO14 from JTAG (TMS) or any other peripheral that might
-     * still claim it after boot.  Without this, uart_set_pin() may succeed but
-     * the IO-MUX remains routed to JTAG and we never see RX data.
-     */
+    if (!s_tx_mutex) {
+        s_tx_mutex = xSemaphoreCreateMutex();
+        if (!s_tx_mutex) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    /* Force-release RX pin from JTAG/other muxing so we can receive data. */
     gpio_reset_pin((gpio_num_t)UART_CTRL_RX_GPIO);
     gpio_set_direction((gpio_num_t)UART_CTRL_RX_GPIO, GPIO_MODE_INPUT);
     gpio_set_pull_mode((gpio_num_t)UART_CTRL_RX_GPIO, GPIO_PULLUP_ONLY);
+
+    gpio_reset_pin((gpio_num_t)UART_CTRL_TX_GPIO);
 
 
 
@@ -132,14 +182,18 @@ esp_err_t uart_ctrl_init(QueueHandle_t cmd_queue)
         .source_clk = UART_SCLK_DEFAULT,
     };
 
-    ESP_RETURN_ON_ERROR(uart_driver_install(UART_CTRL_PORT, 2048, 0, 0, NULL, 0), TAG, "uart_driver_install failed");
+    ESP_RETURN_ON_ERROR(uart_driver_install(UART_CTRL_PORT, 2048, 1024, 0, NULL, 0), TAG, "uart_driver_install failed");
     ESP_RETURN_ON_ERROR(uart_param_config(UART_CTRL_PORT, &cfg), TAG, "uart_param_config failed");
-    /* RX only: TX pin disabled (-1). */
-    ESP_RETURN_ON_ERROR(uart_set_pin(UART_CTRL_PORT, UART_PIN_NO_CHANGE, UART_CTRL_RX_GPIO, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE),
+    ESP_RETURN_ON_ERROR(uart_set_pin(UART_CTRL_PORT, UART_CTRL_TX_GPIO, UART_CTRL_RX_GPIO, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE),
                         TAG,
                         "uart_set_pin failed");
 
-    ESP_LOGW(TAG, "UART control ready: port=%d baud=%d RX_GPIO=%d", (int)UART_CTRL_PORT, UART_CTRL_BAUD, UART_CTRL_RX_GPIO);
+    ESP_LOGW(TAG,
+             "UART control ready: port=%d baud=%d TX_GPIO=%d RX_GPIO=%d",
+             (int)UART_CTRL_PORT,
+             UART_CTRL_BAUD,
+             UART_CTRL_TX_GPIO,
+             UART_CTRL_RX_GPIO);
 
     xTaskCreate(uart_rx_task, "uart_ctrl_rx", 4096, NULL, 10, NULL);
     return ESP_OK;
