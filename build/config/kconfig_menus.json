@@ -5287,6 +5287,181 @@
                 "children": [
                     {
                         "children": [],
+                        "depends_on": "<choice PLAY_MP3_CTRL_IFACE>",
+                        "help": null,
+                        "id": "PLAY_MP3_CTRL_IFACE_I2C",
+                        "name": "PLAY_MP3_CTRL_IFACE_I2C",
+                        "range": null,
+                        "title": "I2C slave (addr 0x42)",
+                        "type": "bool"
+                    },
+                    {
+                        "children": [],
+                        "depends_on": "<choice PLAY_MP3_CTRL_IFACE>",
+                        "help": null,
+                        "id": "PLAY_MP3_CTRL_IFACE_UART",
+                        "name": "PLAY_MP3_CTRL_IFACE_UART",
+                        "range": null,
+                        "title": "UART RX (1-wire)",
+                        "type": "bool"
+                    }
+                ],
+                "depends_on": null,
+                "help": "Select how the external front-end controls the player.\nUART RX (1-wire) is often more reliable than I2C on LyraT boards\nwhen only JP7/JTAG pins are accessible.",
+                "id": "play-mp3-control-control-interface",
+                "name": "PLAY_MP3_CTRL_IFACE",
+                "title": "Control interface",
+                "type": "choice"
+            },
+            {
+                "children": [
+                    {
+                        "children": [
+                            {
+                                "children": [],
+                                "depends_on": "<choice PLAY_MP3_I2C_SLAVE_PORT>",
+                                "help": null,
+                                "id": "PLAY_MP3_I2C_SLAVE_PORT_0",
+                                "name": "PLAY_MP3_I2C_SLAVE_PORT_0",
+                                "range": null,
+                                "title": "I2C_NUM_0",
+                                "type": "bool"
+                            },
+                            {
+                                "children": [],
+                                "depends_on": "<choice PLAY_MP3_I2C_SLAVE_PORT>",
+                                "help": null,
+                                "id": "PLAY_MP3_I2C_SLAVE_PORT_1",
+                                "name": "PLAY_MP3_I2C_SLAVE_PORT_1",
+                                "range": null,
+                                "title": "I2C_NUM_1",
+                                "type": "bool"
+                            }
+                        ],
+                        "depends_on": null,
+                        "help": "Select which I2C peripheral is used for the external control interface.\nKeep it separate from the audio codec I2C bus where possible.",
+                        "id": "play-mp3-control-i2c-slave-control-i2c-slave-port",
+                        "name": "PLAY_MP3_I2C_SLAVE_PORT",
+                        "title": "I2C slave port",
+                        "type": "choice"
+                    },
+                    {
+                        "children": [],
+                        "depends_on": null,
+                        "help": "7-bit I2C address of the audio player (LyraT). Example: 0x42.",
+                        "id": "PLAY_MP3_I2C_SLAVE_ADDR",
+                        "name": "PLAY_MP3_I2C_SLAVE_ADDR",
+                        "range": [
+                            8,
+                            119
+                        ],
+                        "title": "I2C slave address (7-bit)",
+                        "type": "hex"
+                    },
+                    {
+                        "children": [],
+                        "depends_on": null,
+                        "help": "GPIO number for SDA. Must match the Waveshare host wiring.\nNote: GPIO18 is commonly used for the on-board audio codec I2C bus\non LyraT-class boards. If the codec (or ADF peripherals) uses I2C\nmaster on GPIO18/23, using the same pins for the external I2C slave\ncontrol can break one side.\nTip (LyraT v4.3): JP7/JTAG header exposes GPIO15 (TDO, JP7 pin 1).",
+                        "id": "PLAY_MP3_I2C_SLAVE_SDA_GPIO",
+                        "name": "PLAY_MP3_I2C_SLAVE_SDA_GPIO",
+                        "range": [
+                            -1,
+                            48
+                        ],
+                        "title": "I2C SDA GPIO",
+                        "type": "int"
+                    },
+                    {
+                        "children": [],
+                        "depends_on": null,
+                        "help": "GPIO number for SCL. Must match the Waveshare host wiring.\nNote: GPIO23 is commonly used for the on-board audio codec I2C bus\non LyraT-class boards.\nTip (LyraT v4.3): JP7/JTAG header exposes GPIO14 (TMS, JP7 pin 4).",
+                        "id": "PLAY_MP3_I2C_SLAVE_SCL_GPIO",
+                        "name": "PLAY_MP3_I2C_SLAVE_SCL_GPIO",
+                        "range": [
+                            -1,
+                            48
+                        ],
+                        "title": "I2C SCL GPIO",
+                        "type": "int"
+                    }
+                ],
+                "depends_on": null,
+                "id": "play-mp3-control-i2c-slave-control",
+                "title": "I2C Slave Control",
+                "type": "menu"
+            },
+            {
+                "children": [
+                    {
+                        "children": [],
+                        "depends_on": "PLAY_MP3_CTRL_IFACE_UART",
+                        "help": "UART peripheral number (0..2). Default 1.",
+                        "id": "PLAY_MP3_UART_PORT",
+                        "name": "PLAY_MP3_UART_PORT",
+                        "range": [
+                            0,
+                            2
+                        ],
+                        "title": "UART port",
+                        "type": "int"
+                    },
+                    {
+                        "children": [],
+                        "depends_on": "PLAY_MP3_CTRL_IFACE_UART",
+                        "help": "Baud rate for control UART. Default 115200.",
+                        "id": "PLAY_MP3_UART_BAUD",
+                        "name": "PLAY_MP3_UART_BAUD",
+                        "range": [
+                            1200,
+                            2000000
+                        ],
+                        "title": "UART baud rate",
+                        "type": "int"
+                    },
+                    {
+                        "children": [],
+                        "depends_on": "PLAY_MP3_CTRL_IFACE_UART",
+                        "help": "GPIO number for UART RX.\nTip (LyraT v4.3): JP7 pin 4 exposes GPIO14 (TMS).",
+                        "id": "PLAY_MP3_UART_RX_GPIO",
+                        "name": "PLAY_MP3_UART_RX_GPIO",
+                        "range": [
+                            -1,
+                            48
+                        ],
+                        "title": "UART RX GPIO",
+                        "type": "int"
+                    },
+                    {
+                        "children": [],
+                        "depends_on": "PLAY_MP3_CTRL_IFACE_UART",
+                        "help": "Timeout waiting for the remaining bytes of a frame after receiving the length byte.\nIncrease if your sender is slow; decrease for snappier error recovery.",
+                        "id": "PLAY_MP3_UART_FRAME_TIMEOUT_MS",
+                        "name": "PLAY_MP3_UART_FRAME_TIMEOUT_MS",
+                        "range": [
+                            1,
+                            1000
+                        ],
+                        "title": "Frame timeout (ms)",
+                        "type": "int"
+                    }
+                ],
+                "depends_on": "PLAY_MP3_CTRL_IFACE_UART",
+                "id": "play-mp3-control-uart-control",
+                "title": "UART Control",
+                "type": "menu"
+            }
+        ],
+        "depends_on": null,
+        "id": "play-mp3-control",
+        "title": "Play MP3 Control",
+        "type": "menu"
+    },
+    {
+        "children": [
+            {
+                "children": [
+                    {
+                        "children": [],
                         "depends_on": "<choice AUDIO_BOARD>",
                         "help": null,
                         "id": "AUDIO_BOARD_CUSTOM",

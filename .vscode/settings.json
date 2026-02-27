@@ -1,9 +1,15 @@
 {
-    "idf.currentSetup": "C:\\esp\\esp-adf\\esp-idf",
-    "idf.pythonBinPath": "C:\\Users\\patje\\.espressif\\python_env\\idf5.5_py3.11_env\\Scripts\\python.exe",
+    "idf.currentSetup": "C:\\esp\\v5.5.3\\esp-idf",
     "idf.customExtraVars": {
         "ADF_PATH": "C:\\esp\\esp-adf"
     },
+    "idf.enableStatusBar": true,
     "idf.flashType": "UART",
-    "idf.portWin": "COM4"
+    "idf.portWin": "COM4",
+    "idf.port": "COM4",
+
+    "platformio-ide.activateProjectOnTextEditorChange": false,
+    "platformio-ide.autoOpenPlatformIOIniFile": false,
+    "platformio-ide.showEditorTitleShortcuts": false,
+    "platformio-ide.disablePIOHomeStartup": true
 }

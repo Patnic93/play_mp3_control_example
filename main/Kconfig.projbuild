@@ -1,0 +1,102 @@
+menu "Play MP3 Control"
+
+    choice PLAY_MP3_CTRL_IFACE
+        prompt "Control interface"
+        default PLAY_MP3_CTRL_IFACE_UART
+        help
+            Select how the external front-end controls the player.
+            UART RX (1-wire) is often more reliable than I2C on LyraT boards
+            when only JP7/JTAG pins are accessible.
+
+    config PLAY_MP3_CTRL_IFACE_I2C
+        bool "I2C slave (addr 0x42)"
+
+    config PLAY_MP3_CTRL_IFACE_UART
+        bool "UART RX (1-wire)"
+
+    endchoice
+
+    menu "I2C Slave Control"
+
+        choice PLAY_MP3_I2C_SLAVE_PORT
+            prompt "I2C slave port"
+            default PLAY_MP3_I2C_SLAVE_PORT_1
+            help
+                Select which I2C peripheral is used for the external control interface.
+                Keep it separate from the audio codec I2C bus where possible.
+
+        config PLAY_MP3_I2C_SLAVE_PORT_0
+            bool "I2C_NUM_0"
+
+        config PLAY_MP3_I2C_SLAVE_PORT_1
+            bool "I2C_NUM_1"
+
+        endchoice
+
+        config PLAY_MP3_I2C_SLAVE_ADDR
+            hex "I2C slave address (7-bit)"
+            default 0x42
+            range 0x08 0x77
+            help
+                7-bit I2C address of the audio player (LyraT). Example: 0x42.
+
+        config PLAY_MP3_I2C_SLAVE_SDA_GPIO
+            int "I2C SDA GPIO"
+            default 15
+            range -1 48
+            help
+                GPIO number for SDA. Must match the Waveshare host wiring.
+                Note: GPIO18 is commonly used for the on-board audio codec I2C bus
+                on LyraT-class boards. If the codec (or ADF peripherals) uses I2C
+                master on GPIO18/23, using the same pins for the external I2C slave
+                control can break one side.
+                Tip (LyraT v4.3): JP7/JTAG header exposes GPIO15 (TDO, JP7 pin 1).
+
+        config PLAY_MP3_I2C_SLAVE_SCL_GPIO
+            int "I2C SCL GPIO"
+            default 14
+            range -1 48
+            help
+                GPIO number for SCL. Must match the Waveshare host wiring.
+                Note: GPIO23 is commonly used for the on-board audio codec I2C bus
+                on LyraT-class boards.
+                Tip (LyraT v4.3): JP7/JTAG header exposes GPIO14 (TMS, JP7 pin 4).
+
+    endmenu
+
+    menu "UART Control"
+        depends on PLAY_MP3_CTRL_IFACE_UART
+
+        config PLAY_MP3_UART_PORT
+            int "UART port"
+            default 1
+            range 0 2
+            help
+                UART peripheral number (0..2). Default 1.
+
+        config PLAY_MP3_UART_BAUD
+            int "UART baud rate"
+            default 115200
+            range 1200 2000000
+            help
+                Baud rate for control UART. Default 115200.
+
+        config PLAY_MP3_UART_RX_GPIO
+            int "UART RX GPIO"
+            default 14
+            range -1 48
+            help
+                GPIO number for UART RX.
+                Tip (LyraT v4.3): JP7 pin 4 exposes GPIO14 (TMS).
+
+        config PLAY_MP3_UART_FRAME_TIMEOUT_MS
+            int "Frame timeout (ms)"
+            default 50
+            range 1 1000
+            help
+                Timeout waiting for the remaining bytes of a frame after receiving the length byte.
+                Increase if your sender is slow; decrease for snappier error recovery.
+
+    endmenu
+
+endmenu

@@ -590,7 +590,7 @@ C_COMPILER_SUPPORTS_WFORMAT_SIGNEDNESS:INTERNAL=1
 //Details about finding Git
 FIND_PACKAGE_MESSAGE_DETAILS_Git:INTERNAL=[C:/Program Files/Git/cmd/git.exe][v2.52.0.windows.1()]
 //Details about finding Python3
-FIND_PACKAGE_MESSAGE_DETAILS_Python3:INTERNAL=[C:/Espressif/tools/python/v5.5.3/venv/Scripts/python.exe][cfound components: Interpreter ][v3.13.12()]
+FIND_PACKAGE_MESSAGE_DETAILS_Python3:INTERNAL=[C:/Espressif/tools/python/v5.5.3/venv/Scripts/python.exe][cfound components: Interpreter ][v3.11.9()]
 //Details about finding Threads
 FIND_PACKAGE_MESSAGE_DETAILS_Threads:INTERNAL=[TRUE][v()]
 //ADVANCED property for variable: GIT_EXECUTABLE
@@ -603,7 +603,7 @@ _Python3_Compiler_REASON_FAILURE:INTERNAL=
 _Python3_Development_REASON_FAILURE:INTERNAL=
 _Python3_EXECUTABLE:INTERNAL=C:/Espressif/tools/python/v5.5.3/venv/Scripts/python.exe
 //Python3 Properties
-_Python3_INTERPRETER_PROPERTIES:INTERNAL=Python;3;13;12;32;64;;;abi3;C:\Users\patje\scoop\apps\python313\current\Lib;C:\Espressif\tools\python\v5.5.3\venv\Lib;C:\Espressif\tools\python\v5.5.3\venv\Lib\site-packages;C:\Espressif\tools\python\v5.5.3\venv\Lib\site-packages
+_Python3_INTERPRETER_PROPERTIES:INTERNAL=Python;3;11;9;32;64;;;abi3;C:\Users\patje\scoop\apps\python\current\Lib;C:\Espressif\tools\python\v5.5.3\venv\Lib;C:\Espressif\tools\python\v5.5.3\venv\Lib\site-packages;C:\Espressif\tools\python\v5.5.3\venv\Lib\site-packages
 _Python3_INTERPRETER_SIGNATURE:INTERNAL=dd5bca13938637857f8a1ef1f72c4f99
 //NumPy reason failure
 _Python3_NumPy_REASON_FAILURE:INTERNAL=

@@ -33,8 +33,21 @@
  * ============================================================
  *  WIRING
  * ============================================================
- *   LyraT SDA  ->  GPIO 21  ->  front-end SDA
- *   LyraT SCL  ->  GPIO 22  ->  front-end SCL
+ *   Pins are configurable via sdkconfig (CONFIG_PLAY_MP3_I2C_SLAVE_SDA_GPIO / SCL).
+ *   Recommended (ESP32-LyraT v4.3, avoid codec I2C pins 18/23):
+ *     LyraT SDA  ->  GPIO 15 (JP7 pin 1 / TDO)  ->  front-end SDA
+ *     LyraT SCL  ->  GPIO 14 (JP7 pin 4 / TMS)  ->  front-end SCL
+ *   Avoid:
+ *     GPIO 13 is often used for I2S WS/LRCLK on LyraT-style boards (audio codec), so it may be driven and break I2C.
+ *     GPIO 12 is a strapping pin on ESP32; external pull-ups can change boot mode / flash voltage.
+ *
+ *   Physical note (LyraT v4.3): GPIO32/GPIO33 are commonly wired to the MODE/REC buttons.
+ *   They can work electrically, but the button circuitry may load SDA/SCL.
+ *
+ *   Notes:
+ *   - Many LyraT-class boards use GPIO18/23 for the on-board audio codec I2C master bus.
+ *     If the codec/ADF creates an I2C master on those pins, running the external control
+ *     interface as an I2C SLAVE on the same pins/port can become unreliable.
  *   GND        ->  GND
  *   (Add 4.7kOhm pull-ups to 3.3 V on SDA and SCL)
  *
@@ -50,15 +63,38 @@
 #include "freertos/queue.h"
 #include "esp_err.h"
 
+/* Optional: config comes from Kconfig.projbuild (sdkconfig.h). */
+#include "sdkconfig.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* -- Hardware config --------------------------------------- */
+#if defined(CONFIG_PLAY_MP3_I2C_SLAVE_ADDR)
+#define I2C_SLAVE_ADDR      CONFIG_PLAY_MP3_I2C_SLAVE_ADDR
+#else
 #define I2C_SLAVE_ADDR      0x42
-#define I2C_SLAVE_SDA_IO    21
-#define I2C_SLAVE_SCL_IO    22
+#endif
+
+#if defined(CONFIG_PLAY_MP3_I2C_SLAVE_SDA_GPIO)
+#define I2C_SLAVE_SDA_IO    CONFIG_PLAY_MP3_I2C_SLAVE_SDA_GPIO
+#else
+#define I2C_SLAVE_SDA_IO    15
+#endif
+
+#if defined(CONFIG_PLAY_MP3_I2C_SLAVE_SCL_GPIO)
+#define I2C_SLAVE_SCL_IO    CONFIG_PLAY_MP3_I2C_SLAVE_SCL_GPIO
+#else
+#define I2C_SLAVE_SCL_IO    14
+#endif
+
+#if defined(CONFIG_PLAY_MP3_I2C_SLAVE_PORT_0) && (CONFIG_PLAY_MP3_I2C_SLAVE_PORT_0)
+#define I2C_SLAVE_PORT      I2C_NUM_0
+#else
+/* Default to I2C_NUM_1 to avoid clashing with codec I2C on many boards. */
 #define I2C_SLAVE_PORT      I2C_NUM_1
+#endif
 
 /* -- Limits ------------------------------------------------ */
 #define MAX_URL_LEN         255

@@ -113,10 +113,15 @@ void app_main(void)
 
     esp_log_level_set("*", ESP_LOG_WARN);
     esp_log_level_set(TAG, ESP_LOG_INFO);
+    esp_log_level_set("I2C_SLAVE", ESP_LOG_INFO);
 
-    ESP_LOGI(TAG, "[ 0 ] Initialize NVS, WiFi and I2C slave");
+    ESP_LOGI(TAG, "[ 0 ] Initialize I2C slave, NVS and WiFi");
     /* Create I2C command queue before init so slave can start receiving */
     s_i2c_cmd_queue = xQueueCreate(8, sizeof(i2c_command_t));
+
+    /* Start I2C slave early so the front-end can communicate even while WiFi connects */
+    ESP_ERROR_CHECK(i2c_slave_ctrl_init(s_i2c_cmd_queue));
+
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -124,9 +129,6 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
     wifi_init_sta();
-
-    /* Start I2C slave -- front-end can now send commands at any time */
-    ESP_ERROR_CHECK(i2c_slave_ctrl_init(s_i2c_cmd_queue));
 
     ESP_LOGI(TAG, "[ 1 ] Start audio codec chip");
     audio_board_handle_t board_handle = audio_board_init();
@@ -202,9 +204,10 @@ void app_main(void)
     ESP_LOGW(TAG, "      [Play] to start, pause and resume, [Set] to stop.");
     ESP_LOGW(TAG, "      [Vol-] or [Vol+] to adjust volume.");
 
-    ESP_LOGI(TAG, "[ 5.1 ] Start audio_pipeline - streaming NPO Radio 2");
-    i2c_slave_ctrl_set_status(PLAYER_PLAYING, (uint8_t)player_volume);
-    audio_pipeline_run(pipeline);
+    // Belangrijk: start NIET automatisch met de default stream.
+    // Dit voorkomt dat de LyraT na een reset spontaan weer Radio 2 gaat spelen.
+    ESP_LOGI(TAG, "[ 5.1 ] Ready (idle): default URL set, waiting for PLAY or SET_URL");
+    i2c_slave_ctrl_set_status(PLAYER_STOPPED, (uint8_t)player_volume);
 
     while (1) {
         /* -- Check I2C command queue first (non-blocking) -- */
@@ -225,16 +228,28 @@ void app_main(void)
                     break;
                 }
                 case CMD_STOP:
-                    audio_pipeline_stop(pipeline);
-                    audio_pipeline_wait_for_stop(pipeline);
+                    {
+                        audio_element_state_t st = audio_element_get_state(i2s_stream_writer);
+                        if (st == AEL_STATE_RUNNING || st == AEL_STATE_PAUSED || st == AEL_STATE_FINISHED) {
+                            audio_pipeline_stop(pipeline);
+                            audio_pipeline_wait_for_stop(pipeline);
+                        }
+                    }
                     i2c_slave_ctrl_set_status(PLAYER_STOPPED, (uint8_t)player_volume);
                     ESP_LOGI(TAG, "[I2C] STOP");
                     break;
 
                 case CMD_PAUSE:
-                    audio_pipeline_pause(pipeline);
-                    i2c_slave_ctrl_set_status(PLAYER_PAUSED, (uint8_t)player_volume);
-                    ESP_LOGI(TAG, "[I2C] PAUSE");
+                    {
+                        audio_element_state_t st = audio_element_get_state(i2s_stream_writer);
+                        if (st == AEL_STATE_RUNNING) {
+                            audio_pipeline_pause(pipeline);
+                            i2c_slave_ctrl_set_status(PLAYER_PAUSED, (uint8_t)player_volume);
+                            ESP_LOGI(TAG, "[I2C] PAUSE");
+                        } else {
+                            ESP_LOGI(TAG, "[I2C] PAUSE ignored (state=%d)", (int)st);
+                        }
+                    }
                     break;
 
                 case CMD_VOLUME:
@@ -318,8 +333,13 @@ void app_main(void)
             } else if ((int) msg.data == get_input_set_id()) {
                 ESP_LOGI(TAG, "[ * ] [Set] touch tap event");
                 ESP_LOGI(TAG, "[ * ] Stopping audio pipeline");
+                audio_element_state_t el_state = audio_element_get_state(i2s_stream_writer);
+                if (el_state == AEL_STATE_RUNNING || el_state == AEL_STATE_PAUSED || el_state == AEL_STATE_FINISHED) {
+                    audio_pipeline_stop(pipeline);
+                    audio_pipeline_wait_for_stop(pipeline);
+                }
                 i2c_slave_ctrl_set_status(PLAYER_STOPPED, (uint8_t)player_volume);
-                break;
+                continue;
             } else if ((int) msg.data == get_input_mode_id()) {
                 ESP_LOGI(TAG, "[ * ] [mode] tap event - restart stream");
                 audio_pipeline_stop(pipeline);
@@ -337,7 +357,10 @@ void app_main(void)
                     player_volume = 100;
                 }
                 audio_hal_set_volume(board_handle->audio_hal, player_volume);
-                i2c_slave_ctrl_set_status(PLAYER_PLAYING, (uint8_t)player_volume);
+                i2c_slave_ctrl_set_status(
+                    (audio_element_get_state(i2s_stream_writer) == AEL_STATE_RUNNING)
+                        ? PLAYER_PLAYING : PLAYER_STOPPED,
+                    (uint8_t)player_volume);
                 ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
             } else if ((int) msg.data == get_input_voldown_id()) {
                 ESP_LOGI(TAG, "[ * ] [Vol-] touch tap event");
@@ -346,7 +369,10 @@ void app_main(void)
                     player_volume = 0;
                 }
                 audio_hal_set_volume(board_handle->audio_hal, player_volume);
-                i2c_slave_ctrl_set_status(PLAYER_PLAYING, (uint8_t)player_volume);
+                i2c_slave_ctrl_set_status(
+                    (audio_element_get_state(i2s_stream_writer) == AEL_STATE_RUNNING)
+                        ? PLAYER_PLAYING : PLAYER_STOPPED,
+                    (uint8_t)player_volume);
                 ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
             }
         }

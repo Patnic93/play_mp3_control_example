@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "espressif.esp-idf-extension"
+  ],
+  "unwantedRecommendations": [
+    "platformio.platformio-ide"
+  ]
+}

@@ -31,8 +31,8 @@ WiFi credentials and default stream URL are defined at the top of
 `main/play_mp3_control_example.c`:
 
 ```c
-#define WIFI_SSID        "your-ssid"
-#define WIFI_PASSWORD    "your-password"
+LyraT GPIO 18 (SDA)  ---[4.7kOhm pull-up to 3.3V]---  Front-end SDA
+LyraT GPIO 23 (SCL)  ---[4.7kOhm pull-up to 3.3V]---  Front-end SCL
 #define RADIO_STREAM_URL "http://icecast.omroep.nl/radio2-bb-mp3"
 ```
 
@@ -51,12 +51,24 @@ WiFi credentials and default stream URL are defined at the top of
 The LyraT acts as an **I2C slave** at address **0x42**.
 A front-end microcontroller (master) can send commands at any time.
 
+The I2C slave address / pins / port are configurable via `menuconfig`:
+
+```
+menuconfig > Play MP3 Control > I2C Slave Control
+```
+
+- I2C slave address (7-bit): default `0x42`
+- SDA GPIO: default `18`
+- SCL GPIO: default `23`
+- I2C port: default `I2C_NUM_1`
+
 ### Wiring
 
 ```
-LyraT GPIO 21 (SDA)  ---[4.7kOhm pull-up to 3.3V]---  Front-end SDA
-LyraT GPIO 22 (SCL)  ---[4.7kOhm pull-up to 3.3V]---  Front-end SCL
+LyraT GPIO 18 (SDA)  ---[4.7kOhm pull-up to 3.3V]---  Front-end SDA
+LyraT GPIO 23 (SCL)  ---[4.7kOhm pull-up to 3.3V]---  Front-end SCL
 GND                  ---                               GND
+
 ```
 
 - I2C address: `0x42` (7-bit)
