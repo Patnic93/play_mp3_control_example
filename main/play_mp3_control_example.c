@@ -49,17 +49,43 @@
 
 static const char *TAG = "NPO_RADIO2_STREAM";
 
+// --- WiFi credentials (local secrets) ---
+// Captive portal is uitgeschakeld; credentials komen uit wifi_secrets.h (lokaal, git-ignored).
+// Als wifi_secrets.h ontbreekt, wordt WiFi overgeslagen.
+#if defined(__has_include)
+#if __has_include("wifi_secrets.h")
+#include "wifi_secrets.h"
+#endif
+#endif
+
+#ifndef LYRAT_WIFI_SSID
+#define LYRAT_WIFI_SSID "JOUW_SSID_HIER"
+#endif
+
+#ifndef LYRAT_WIFI_PWD
+#define LYRAT_WIFI_PWD ""
+#endif
+
+static const char *WIFI_SSID = LYRAT_WIFI_SSID;
+static const char *WIFI_PWD  = LYRAT_WIFI_PWD;
+
+// Captive portal uitschakelen
+#define ENABLE_CAPTIVE_PORTAL 0
+
 static EventGroupHandle_t wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
+#if ENABLE_CAPTIVE_PORTAL
 #define WIFI_PORTAL_CRED_BIT BIT2
 
 static httpd_handle_t s_portal_httpd;
 static TaskHandle_t s_dns_task;
 static volatile bool s_dns_task_stop;
 static wifi_config_t s_portal_sta_cfg;
+#endif
 static int s_wifi_retry_count;
 
+#if ENABLE_CAPTIVE_PORTAL
 static void url_decode_inplace(char *s)
 {
     if (!s) {
@@ -383,6 +409,8 @@ static void captive_portal_stop(void)
     }
 }
 
+#endif // ENABLE_CAPTIVE_PORTAL
+
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
 {
@@ -408,15 +436,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
-static bool wifi_has_saved_creds(void)
-{
-    wifi_config_t cfg = {0};
-    if (esp_wifi_get_config(WIFI_IF_STA, &cfg) != ESP_OK) {
-        return false;
-    }
-    return cfg.sta.ssid[0] != 0;
-}
-
 static void wifi_init_sta_or_portal(void)
 {
     wifi_event_group = xEventGroupCreate();
@@ -430,64 +449,43 @@ static void wifi_init_sta_or_portal(void)
         ESP_ERROR_CHECK(err);
     }
 
-    /* Captive portal needs AP netif for DHCP/IP; keep STA netif too. */
-    esp_netif_create_default_wifi_ap();
     esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
 
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
 
-    for (;;) {
-        if (wifi_has_saved_creds()) {
-            ESP_LOGI(TAG, "WiFi credentials found in flash. Connecting...");
-            ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-            s_wifi_retry_count = 0;
-            ESP_ERROR_CHECK(esp_wifi_start());
-            xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
-            EventBits_t bits = xEventGroupWaitBits(wifi_event_group,
-                                                   WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                                   pdFALSE, pdFALSE, pdMS_TO_TICKS(20000));
-            if (bits & WIFI_CONNECTED_BIT) {
-                ESP_LOGI(TAG, "WiFi connected");
-                return;
-            }
-            ESP_LOGW(TAG, "WiFi connect failed. Starting captive portal...");
-            ESP_ERROR_CHECK(esp_wifi_stop());
-        } else {
-            ESP_LOGW(TAG, "No WiFi credentials found. Starting captive portal...");
-        }
-
-        xEventGroupClearBits(wifi_event_group, WIFI_PORTAL_CRED_BIT);
-        captive_portal_start();
-
-        /* Wait until we receive credentials via HTTP. */
-        (void)xEventGroupWaitBits(wifi_event_group, WIFI_PORTAL_CRED_BIT, pdTRUE, pdFALSE, portMAX_DELAY);
-
-        captive_portal_stop();
-        ESP_ERROR_CHECK(esp_wifi_stop());
-
-        /* Save and try connect as STA */
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &s_portal_sta_cfg));
-        s_wifi_retry_count = 0;
-        ESP_ERROR_CHECK(esp_wifi_start());
-
-        xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
-        EventBits_t bits = xEventGroupWaitBits(wifi_event_group,
-                                               WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                               pdFALSE, pdFALSE, pdMS_TO_TICKS(20000));
-        if (bits & WIFI_CONNECTED_BIT) {
-            ESP_LOGI(TAG, "WiFi connected after portal");
-            return;
-        }
-
-        ESP_LOGW(TAG, "WiFi failed after portal. Restarting portal...");
-        ESP_ERROR_CHECK(esp_wifi_stop());
+    if (WIFI_SSID == NULL || WIFI_SSID[0] == 0 || strcmp(WIFI_SSID, "JOUW_SSID_HIER") == 0) {
+        ESP_LOGW(TAG, "WiFi SSID niet ingesteld; captive portal is uit. WiFi wordt overgeslagen.");
+        return;
     }
+
+    wifi_config_t sta_cfg = {0};
+    strlcpy((char *)sta_cfg.sta.ssid, WIFI_SSID, sizeof(sta_cfg.sta.ssid));
+    strlcpy((char *)sta_cfg.sta.password, WIFI_PWD ? WIFI_PWD : "", sizeof(sta_cfg.sta.password));
+    sta_cfg.sta.threshold.authmode = (WIFI_PWD && WIFI_PWD[0] != 0) ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;
+    sta_cfg.sta.pmf_cfg.capable = true;
+    sta_cfg.sta.pmf_cfg.required = false;
+
+    ESP_LOGI(TAG, "Connecting to WiFi SSID='%s' (captive portal disabled)", WIFI_SSID);
+    xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
+    s_wifi_retry_count = 0;
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    EventBits_t bits = xEventGroupWaitBits(wifi_event_group,
+                                           WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+                                           pdFALSE, pdFALSE, pdMS_TO_TICKS(20000));
+    if (bits & WIFI_CONNECTED_BIT) {
+        ESP_LOGI(TAG, "WiFi connected");
+        return;
+    }
+
+    ESP_LOGE(TAG, "WiFi connect failed and captive portal is disabled");
 }
 
 /* -- Command queue (shared between control interface and app_main) -- */

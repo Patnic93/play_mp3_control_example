@@ -1,0 +1,5 @@
+# ESP-IDF build output
+build/
+
+# Local WiFi secrets (do not commit)
+main/wifi_secrets.h
