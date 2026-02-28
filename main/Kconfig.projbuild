@@ -87,6 +87,7 @@ menu "Play MP3 Control"
             range -1 48
             help
                 GPIO number for UART TX.
+                Note: GPIO13 is often connected to the SD-card interface on LyraT boards.
 
         config PLAY_MP3_UART_RX_GPIO
             int "UART RX GPIO"
@@ -103,6 +104,14 @@ menu "Play MP3 Control"
             help
                 Timeout waiting for the remaining bytes of a frame after receiving the length byte.
                 Increase if your sender is slow; decrease for snappier error recovery.
+
+        config PLAY_MP3_UART_DEBUG_STATUS_BEACON
+            bool "Debug: periodic STATUS beacon"
+            default n
+            help
+                When enabled, the LyraT periodically transmits a STATUS frame over UART.
+                This helps with wiring/debugging (you can see UART TX activity on the pin)
+                and allows a host to verify RX without requiring request/response timing.
 
     endmenu
 

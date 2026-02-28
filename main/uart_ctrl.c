@@ -19,12 +19,25 @@
 #include "esp_log.h"
 
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 
 #include <string.h>
 
 static const char *TAG = "UART_CTRL";
 
 #include "sdkconfig.h"
+
+// Bring-up helper: periodically transmit a STATUS frame so you can identify the UART TX pin
+// with a logic analyzer / USB-TTL adapter even if the host isn't sending commands yet.
+// Set to 0 to disable.
+#ifndef UART_CTRL_STATUS_BEACON_ENABLED
+#define UART_CTRL_STATUS_BEACON_ENABLED 0
+#endif
+
+// Set to 1 for verbose UART logs during wiring/debug.
+#ifndef UART_CTRL_VERBOSE_LOGS
+#define UART_CTRL_VERBOSE_LOGS 0
+#endif
 
 #if defined(CONFIG_PLAY_MP3_UART_PORT)
 #define UART_CTRL_PORT           ((uart_port_t)CONFIG_PLAY_MP3_UART_PORT)
@@ -63,6 +76,9 @@ static SemaphoreHandle_t s_tx_mutex;
 static volatile uint8_t s_status_reply[2] = {PLAYER_STOPPED, 50};
 
 static void uart_rx_task(void *arg);
+#if UART_CTRL_STATUS_BEACON_ENABLED
+static void uart_status_beacon_task(void *arg);
+#endif
 
 static esp_err_t uart_ctrl_send_frame(const uint8_t *payload, size_t len)
 {
@@ -138,7 +154,16 @@ static void parse_and_enqueue(const uint8_t *data, size_t len)
     case CMD_STATUS:
         {
             uint8_t reply[3] = {CMD_STATUS, s_status_reply[0], s_status_reply[1]};
-            (void)uart_ctrl_send_frame(reply, sizeof(reply));
+            ESP_LOGD(TAG,
+                     "CMD_STATUS rx -> reply: status=%u volume=%u (TX_GPIO=%d RX_GPIO=%d)",
+                     (unsigned)reply[1],
+                     (unsigned)reply[2],
+                     (int)UART_CTRL_TX_GPIO,
+                     (int)UART_CTRL_RX_GPIO);
+            esp_err_t tx = uart_ctrl_send_frame(reply, sizeof(reply));
+            if (tx != ESP_OK) {
+                ESP_LOGD(TAG, "CMD_STATUS reply send failed: %s", esp_err_to_name(tx));
+            }
         }
         break;
 
@@ -170,6 +195,7 @@ esp_err_t uart_ctrl_init(QueueHandle_t cmd_queue)
     gpio_set_pull_mode((gpio_num_t)UART_CTRL_RX_GPIO, GPIO_PULLUP_ONLY);
 
     gpio_reset_pin((gpio_num_t)UART_CTRL_TX_GPIO);
+    gpio_set_direction((gpio_num_t)UART_CTRL_TX_GPIO, GPIO_MODE_OUTPUT);
 
 
 
@@ -196,8 +222,25 @@ esp_err_t uart_ctrl_init(QueueHandle_t cmd_queue)
              UART_CTRL_RX_GPIO);
 
     xTaskCreate(uart_rx_task, "uart_ctrl_rx", 4096, NULL, 10, NULL);
+
+#if UART_CTRL_STATUS_BEACON_ENABLED
+    xTaskCreate(uart_status_beacon_task, "uart_status_beacon", 2048, NULL, 5, NULL);
+    ESP_LOGW(TAG, "UART debug STATUS beacon enabled (1 Hz)");
+#endif
     return ESP_OK;
 }
+
+#if UART_CTRL_STATUS_BEACON_ENABLED
+static void uart_status_beacon_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        uint8_t reply[3] = {CMD_STATUS, s_status_reply[0], s_status_reply[1]};
+        (void)uart_ctrl_send_frame(reply, sizeof(reply));
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+#endif
 
 static void uart_rx_task(void *arg)
 {
@@ -238,7 +281,11 @@ static void uart_rx_task(void *arg)
             continue;
         }
 
-        ESP_LOGW(TAG, "RX frame: len=%u opcode=0x%02X", (unsigned)want, (unsigned)buf[0]);
+        if (UART_CTRL_VERBOSE_LOGS) {
+            ESP_LOGW(TAG, "RX frame: len=%u opcode=0x%02X", (unsigned)want, (unsigned)buf[0]);
+        } else {
+            ESP_LOGD(TAG, "RX frame: len=%u opcode=0x%02X", (unsigned)want, (unsigned)buf[0]);
+        }
         parse_and_enqueue(buf, want);
     }
 }
