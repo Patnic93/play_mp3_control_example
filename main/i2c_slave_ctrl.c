@@ -187,7 +187,16 @@ static void i2c_parse_task(void *arg)
         case CMD_STATUS:
             /* Status reply is handled by on_request callback */
             break;
-
+        case CMD_EQ:
+            if (got < 3) {
+                ESP_LOGW(TAG, "CMD_EQ: short frame");
+                break;
+            }
+            cmd.eq_band = data[1];
+            cmd.eq_gain = (int8_t)data[2];
+            ESP_LOGI(TAG, "CMD_EQ: band=%u gain=%d dB", (unsigned)cmd.eq_band, (int)cmd.eq_gain);
+            (void)xQueueSend(s_cmd_queue, &cmd, 0);
+            break;
         default:
             ESP_LOGW(TAG, "Unknown opcode 0x%02X", (unsigned)op);
             break;

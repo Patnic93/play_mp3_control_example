@@ -39,6 +39,7 @@
 #include "http_stream.h"
 #include "i2s_stream.h"
 #include "mp3_decoder.h"
+#include "equalizer.h"
 #include "esp_peripherals.h"
 #include "periph_touch.h"
 #include "periph_adc_button.h"
@@ -506,7 +507,7 @@ static inline void ctrl_set_status(uint8_t status, uint8_t volume)
 void app_main(void)
 {
     audio_pipeline_handle_t pipeline;
-    audio_element_handle_t http_stream_reader, i2s_stream_writer, mp3_decoder;
+    audio_element_handle_t http_stream_reader, i2s_stream_writer, mp3_decoder, equalizer;
 
     esp_log_level_set("*", ESP_LOG_WARN);
     esp_log_level_set(TAG, ESP_LOG_INFO);
@@ -564,6 +565,15 @@ void app_main(void)
     mp3_cfg.task_prio   = 6;
     mp3_decoder = mp3_decoder_init(&mp3_cfg);
 
+    ESP_LOGI(TAG, "[2.2b] Create equalizer");
+    equalizer_cfg_t eq_cfg = DEFAULT_EQUALIZER_CONFIG();
+    eq_cfg.channel = 2;  /* stereo */
+    equalizer = equalizer_init(&eq_cfg);
+    /* Init alle banden op 0 dB (flat) */
+    for (int band = 0; band < 10; band++) {
+        equalizer_set_gain_info(equalizer, band, 0, true);
+    }
+
     ESP_LOGI(TAG, "[2.3] Create i2s stream to write data to codec chip");
 #if defined CONFIG_ESP32_C3_LYRA_V2_BOARD
     i2s_stream_cfg_t i2s_cfg = I2S_STREAM_PDM_TX_CFG_DEFAULT();
@@ -578,11 +588,12 @@ void app_main(void)
     ESP_LOGI(TAG, "[2.4] Register all elements to audio pipeline");
     audio_pipeline_register(pipeline, http_stream_reader, "http");
     audio_pipeline_register(pipeline, mp3_decoder, "mp3");
+    audio_pipeline_register(pipeline, equalizer, "eq");
     audio_pipeline_register(pipeline, i2s_stream_writer, "i2s");
 
-    ESP_LOGI(TAG, "[2.5] Link it together [http_stream]-->mp3_decoder-->i2s_stream-->[codec_chip]");
-    const char *link_tag[3] = {"http", "mp3", "i2s"};
-    audio_pipeline_link(pipeline, &link_tag[0], 3);
+    ESP_LOGI(TAG, "[2.5] Link it together [http_stream]-->mp3_decoder-->equalizer-->i2s_stream-->[codec_chip]");
+    const char *link_tag[4] = {"http", "mp3", "eq", "i2s"};
+    audio_pipeline_link(pipeline, &link_tag[0], 4);
 
     ESP_LOGI(TAG, "[2.6] Set radio stream URL");
     audio_element_set_uri(http_stream_reader, RADIO_STREAM_URL);
@@ -676,6 +687,11 @@ void app_main(void)
                     audio_element_set_uri(http_stream_reader, i2c_cmd.url);
                     audio_pipeline_run(pipeline);
                     ctrl_set_status(PLAYER_PLAYING, (uint8_t)player_volume);
+                    break;
+
+                case CMD_EQ:
+                    equalizer_set_gain_info(equalizer, i2c_cmd.eq_band, i2c_cmd.eq_gain, true);
+                    ESP_LOGI(TAG, "[I2C] EQ band=%u gain=%d dB", (unsigned)i2c_cmd.eq_band, (int)i2c_cmd.eq_gain);
                     break;
 
                 default:
@@ -788,6 +804,7 @@ void app_main(void)
     audio_pipeline_terminate(pipeline);
     audio_pipeline_unregister(pipeline, http_stream_reader);
     audio_pipeline_unregister(pipeline, mp3_decoder);
+    audio_pipeline_unregister(pipeline, equalizer);
     audio_pipeline_unregister(pipeline, i2s_stream_writer);
 
     /* Terminate the pipeline before removing the listener */
@@ -799,6 +816,7 @@ void app_main(void)
     /* Release all resources */
     audio_pipeline_deinit(pipeline);
     audio_element_deinit(http_stream_reader);
+    audio_element_deinit(equalizer);
     audio_element_deinit(i2s_stream_writer);
     audio_element_deinit(mp3_decoder);
 }

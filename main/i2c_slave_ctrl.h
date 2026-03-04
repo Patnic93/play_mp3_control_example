@@ -108,6 +108,7 @@ typedef enum {
     CMD_VOLUME  = 0x04,
     CMD_SET_URL = 0x05,
     CMD_STATUS  = 0x06,
+    CMD_EQ      = 0x07,  /* [0x07][band:uint8 0-9][gain:int8 dB] */
 } i2c_cmd_opcode_t;
 
 /* -- Player status codes (returned on CMD_STATUS read) ----- */
@@ -123,6 +124,8 @@ typedef struct {
     i2c_cmd_opcode_t opcode;
     uint8_t          volume;            /* valid for CMD_VOLUME  */
     char             url[MAX_URL_LEN + 1]; /* valid for CMD_SET_URL */
+    uint8_t          eq_band;           /* valid for CMD_EQ: band 0-9 */
+    int8_t           eq_gain;           /* valid for CMD_EQ: gain in dB */
 } i2c_command_t;
 
 /* -- Public API -------------------------------------------- */

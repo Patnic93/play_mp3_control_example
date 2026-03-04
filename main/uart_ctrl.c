@@ -151,6 +151,17 @@ static void parse_and_enqueue(const uint8_t *data, size_t len)
         break;
     }
 
+    case CMD_EQ:
+        if (len < 3) {
+            ESP_LOGW(TAG, "CMD_EQ: short frame");
+            break;
+        }
+        cmd.eq_band = data[1];
+        cmd.eq_gain = (int8_t)data[2];
+        ESP_LOGI(TAG, "CMD_EQ: band=%u gain=%d dB", (unsigned)cmd.eq_band, (int)cmd.eq_gain);
+        (void)xQueueSend(s_cmd_queue, &cmd, 0);
+        break;
+
     case CMD_STATUS:
         {
             uint8_t reply[3] = {CMD_STATUS, s_status_reply[0], s_status_reply[1]};
