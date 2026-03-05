@@ -110,6 +110,12 @@ void uart_ctrl_set_status(uint8_t status, uint8_t volume)
     s_status_reply[1] = volume;
 }
 
+void uart_ctrl_send_audio_level(uint8_t left, uint8_t right)
+{
+    uint8_t frame[3] = { CMD_AUDIO_LEVEL, left, right };
+    (void)uart_ctrl_send_frame(frame, sizeof(frame));
+}
+
 static void parse_and_enqueue(const uint8_t *data, size_t len)
 {
     if (!data || len == 0) {

@@ -25,6 +25,7 @@
 #include "nvs_flash.h"
 #include "i2c_slave_ctrl.h"
 #include "uart_ctrl.h"
+#include "audio_level_tap.h"
 #include "sdkconfig.h"
 #include "esp_http_server.h"
 
@@ -508,6 +509,7 @@ void app_main(void)
 {
     audio_pipeline_handle_t pipeline;
     audio_element_handle_t http_stream_reader, i2s_stream_writer, mp3_decoder, equalizer;
+    audio_element_handle_t level_tap;
 
     esp_log_level_set("*", ESP_LOG_WARN);
     esp_log_level_set(TAG, ESP_LOG_INFO);
@@ -585,15 +587,19 @@ void app_main(void)
     i2s_cfg.task_prio = 23;
     i2s_stream_writer = i2s_stream_init(&i2s_cfg);
 
+    ESP_LOGI(TAG, "[2.3b] Create audio level tap");
+    level_tap = audio_level_tap_init();
+
     ESP_LOGI(TAG, "[2.4] Register all elements to audio pipeline");
     audio_pipeline_register(pipeline, http_stream_reader, "http");
     audio_pipeline_register(pipeline, mp3_decoder, "mp3");
     audio_pipeline_register(pipeline, equalizer, "eq");
+    audio_pipeline_register(pipeline, level_tap, "level_tap");
     audio_pipeline_register(pipeline, i2s_stream_writer, "i2s");
 
-    ESP_LOGI(TAG, "[2.5] Link it together [http_stream]-->mp3_decoder-->equalizer-->i2s_stream-->[codec_chip]");
-    const char *link_tag[4] = {"http", "mp3", "eq", "i2s"};
-    audio_pipeline_link(pipeline, &link_tag[0], 4);
+    ESP_LOGI(TAG, "[2.5] Link it together [http]-->mp3-->eq-->level_tap-->i2s-->[codec]");
+    const char *link_tag[5] = {"http", "mp3", "eq", "level_tap", "i2s"};
+    audio_pipeline_link(pipeline, &link_tag[0], 5);
 
     ESP_LOGI(TAG, "[2.6] Set radio stream URL");
     audio_element_set_uri(http_stream_reader, RADIO_STREAM_URL);
@@ -696,6 +702,21 @@ void app_main(void)
 
                 default:
                     break;
+            }
+        }
+
+        /* -- Send audio levels via UART (~10 Hz) -- */
+        {
+            static uint32_t last_level_ms = 0;
+            uint32_t now = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+            if (now - last_level_ms >= 100) {
+                last_level_ms = now;
+                audio_element_state_t st = audio_element_get_state(i2s_stream_writer);
+                if (st == AEL_STATE_RUNNING) {
+                    uart_ctrl_send_audio_level(audio_level_get_l(), audio_level_get_r());
+                } else {
+                    audio_level_reset();
+                }
             }
         }
 

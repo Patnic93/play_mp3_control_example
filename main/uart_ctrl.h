@@ -27,6 +27,12 @@ esp_err_t uart_ctrl_init(QueueHandle_t cmd_queue);
  */
 void uart_ctrl_set_status(uint8_t status, uint8_t volume);
 
+/**
+ * @brief Send an unsolicited AUDIO_LEVEL frame to the host.
+ *        Frame: [len=3][0x08][peak_L][peak_R]
+ */
+void uart_ctrl_send_audio_level(uint8_t left, uint8_t right);
+
 #ifdef __cplusplus
 }
 #endif

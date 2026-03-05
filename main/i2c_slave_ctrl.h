@@ -108,7 +108,8 @@ typedef enum {
     CMD_VOLUME  = 0x04,
     CMD_SET_URL = 0x05,
     CMD_STATUS  = 0x06,
-    CMD_EQ      = 0x07,  /* [0x07][band:uint8 0-9][gain:int8 dB] */
+    CMD_EQ          = 0x07,  /* [0x07][band:uint8 0-9][gain:int8 dB] */
+    CMD_AUDIO_LEVEL = 0x08,  /* [0x08][peak_L:uint8 0-255][peak_R:uint8 0-255] — unsolicited, device->host */
 } i2c_cmd_opcode_t;
 
 /* -- Player status codes (returned on CMD_STATUS read) ----- */
