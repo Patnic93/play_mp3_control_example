@@ -12,6 +12,7 @@
 #include "uart_ctrl.h"
 
 #include "i2c_slave_ctrl.h" /* reuse i2c_command_t + opcodes */
+#include "aht20.h"
 
 #include "driver/uart.h"
 #include "driver/gpio.h"
@@ -22,6 +23,7 @@
 #include "freertos/task.h"
 
 #include <string.h>
+#include <time.h>
 
 static const char *TAG = "UART_CTRL";
 
@@ -38,6 +40,12 @@ static const char *TAG = "UART_CTRL";
 #ifndef UART_CTRL_VERBOSE_LOGS
 #define UART_CTRL_VERBOSE_LOGS 0
 #endif
+
+// Beacon en ASCII TX-test uitgeschakeld na succesvolle wire-test.
+#undef  UART_CTRL_STATUS_BEACON_ENABLED
+#define UART_CTRL_STATUS_BEACON_ENABLED 0
+#undef  UART_CTRL_TX_TEST_ENABLED
+#define UART_CTRL_TX_TEST_ENABLED 0
 
 #if defined(CONFIG_PLAY_MP3_UART_PORT)
 #define UART_CTRL_PORT           ((uart_port_t)CONFIG_PLAY_MP3_UART_PORT)
@@ -79,6 +87,9 @@ static void uart_rx_task(void *arg);
 #if UART_CTRL_STATUS_BEACON_ENABLED
 static void uart_status_beacon_task(void *arg);
 #endif
+#if UART_CTRL_TX_TEST_ENABLED
+static void uart_tx_test_task(void *arg);
+#endif
 
 static esp_err_t uart_ctrl_send_frame(const uint8_t *payload, size_t len)
 {
@@ -99,8 +110,11 @@ static esp_err_t uart_ctrl_send_frame(const uint8_t *payload, size_t len)
     }
 
     if (w0 != 1 || w1 != (int)len) {
+        ESP_LOGE(TAG, "uart_write_bytes mislukt: w0=%d w1=%d len=%u", w0, w1, (unsigned)len);
         return ESP_FAIL;
     }
+
+    ESP_LOGD(TAG, "TX %u bytes: opcode=0x%02X", (unsigned)(1 + len), (unsigned)payload[0]);
     return ESP_OK;
 }
 
@@ -113,6 +127,38 @@ void uart_ctrl_set_status(uint8_t status, uint8_t volume)
 void uart_ctrl_send_audio_level(uint8_t left, uint8_t right)
 {
     uint8_t frame[3] = { CMD_AUDIO_LEVEL, left, right };
+    (void)uart_ctrl_send_frame(frame, sizeof(frame));
+}
+
+void uart_ctrl_send_time_sync(void)
+{
+    time_t now = time(NULL);
+    if (now < 1577836800L) {  /* sanity: na 2020-01-01 */
+        ESP_LOGW(TAG, "CMD_TIME_SYNC: klok nog niet gesynchroniseerd (epoch=%lld), niet verstuurd",
+                 (long long)now);
+        return;
+    }
+    uint32_t epoch = (uint32_t)now;
+    uint8_t frame[5] = {
+        CMD_TIME_SYNC,
+        (uint8_t)(epoch >> 24),
+        (uint8_t)(epoch >> 16),
+        (uint8_t)(epoch >>  8),
+        (uint8_t)(epoch & 0xFF),
+    };
+    (void)uart_ctrl_send_frame(frame, sizeof(frame));
+    ESP_LOGI(TAG, "CMD_TIME_SYNC verstuurd: epoch=%lu", (unsigned long)epoch);
+}
+
+void uart_ctrl_send_sensor_data(float temp_c, float hum_pct)
+{
+    int16_t t = (int16_t)(temp_c * 10.0f);
+    int16_t h = (int16_t)(hum_pct * 10.0f);
+    uint8_t frame[5] = {
+        CMD_SENSOR_DATA,
+        (uint8_t)(t >> 8), (uint8_t)(t & 0xFF),
+        (uint8_t)(h >> 8), (uint8_t)(h & 0xFF),
+    };
     (void)uart_ctrl_send_frame(frame, sizeof(frame));
 }
 
@@ -171,15 +217,30 @@ static void parse_and_enqueue(const uint8_t *data, size_t len)
     case CMD_STATUS:
         {
             uint8_t reply[3] = {CMD_STATUS, s_status_reply[0], s_status_reply[1]};
-            ESP_LOGD(TAG,
-                     "CMD_STATUS rx -> reply: status=%u volume=%u (TX_GPIO=%d RX_GPIO=%d)",
+            ESP_LOGI(TAG,
+                     "CMD_STATUS rx -> reply: status=%u volume=%u",
                      (unsigned)reply[1],
-                     (unsigned)reply[2],
-                     (int)UART_CTRL_TX_GPIO,
-                     (int)UART_CTRL_RX_GPIO);
+                     (unsigned)reply[2]);
             esp_err_t tx = uart_ctrl_send_frame(reply, sizeof(reply));
             if (tx != ESP_OK) {
-                ESP_LOGD(TAG, "CMD_STATUS reply send failed: %s", esp_err_to_name(tx));
+                ESP_LOGW(TAG, "CMD_STATUS reply send failed: %s", esp_err_to_name(tx));
+            }
+        }
+        break;
+
+    case CMD_REQUEST_TIME:
+        uart_ctrl_send_time_sync();
+        ESP_LOGI(TAG, "CMD_REQUEST_TIME -> tijdsync verstuurd");
+        break;
+
+    case CMD_REQUEST_SENSOR:
+        {
+            float temp = 0.0f, hum = 0.0f;
+            if (aht20_get_last(&temp, &hum) == ESP_OK) {
+                uart_ctrl_send_sensor_data(temp, hum);
+                ESP_LOGI(TAG, "CMD_REQUEST_SENSOR -> %.1f°C %.1f%%", temp, hum);
+            } else {
+                ESP_LOGW(TAG, "CMD_REQUEST_SENSOR: nog geen sensordata beschikbaar");
             }
         }
         break;
@@ -244,6 +305,10 @@ esp_err_t uart_ctrl_init(QueueHandle_t cmd_queue)
     xTaskCreate(uart_status_beacon_task, "uart_status_beacon", 2048, NULL, 5, NULL);
     ESP_LOGW(TAG, "UART debug STATUS beacon enabled (1 Hz)");
 #endif
+#if UART_CTRL_TX_TEST_ENABLED
+    xTaskCreate(uart_tx_test_task, "uart_tx_test", 1024, NULL, 4, NULL);
+    ESP_LOGW(TAG, "UART TX test actief: stuurt 'hallo waveshare' via GPIO%d", UART_CTRL_TX_GPIO);
+#endif
     return ESP_OK;
 }
 
@@ -254,6 +319,19 @@ static void uart_status_beacon_task(void *arg)
     for (;;) {
         uint8_t reply[3] = {CMD_STATUS, s_status_reply[0], s_status_reply[1]};
         (void)uart_ctrl_send_frame(reply, sizeof(reply));
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+#endif
+
+#if UART_CTRL_TX_TEST_ENABLED
+static void uart_tx_test_task(void *arg)
+{
+    (void)arg;
+    const char *msg = "hallo waveshare\r\n";
+    for (;;) {
+        int written = uart_write_bytes(UART_CTRL_PORT, msg, strlen(msg));
+        ESP_LOGI(TAG, "TX test: %d bytes geschreven -> 'hallo waveshare'", written);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
@@ -298,11 +376,7 @@ static void uart_rx_task(void *arg)
             continue;
         }
 
-        if (UART_CTRL_VERBOSE_LOGS) {
-            ESP_LOGW(TAG, "RX frame: len=%u opcode=0x%02X", (unsigned)want, (unsigned)buf[0]);
-        } else {
-            ESP_LOGD(TAG, "RX frame: len=%u opcode=0x%02X", (unsigned)want, (unsigned)buf[0]);
-        }
+        ESP_LOGI(TAG, "RX frame: len=%u opcode=0x%02X", (unsigned)want, (unsigned)buf[0]);
         parse_and_enqueue(buf, want);
     }
 }

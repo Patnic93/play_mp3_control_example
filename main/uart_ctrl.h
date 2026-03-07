@@ -33,6 +33,21 @@ void uart_ctrl_set_status(uint8_t status, uint8_t volume);
  */
 void uart_ctrl_send_audio_level(uint8_t left, uint8_t right);
 
+/**
+ * @brief Stuur AHT20 sensordata naar de Waveshare.
+ *        Frame: [len=5][0x0B][temp_hi][temp_lo][hum_hi][hum_lo]
+ *        Waarden zijn big-endian int16, eenheid 1/10
+ *        (bijv. 21.6 °C → 216 = 0x00D8, 46.5% → 465 = 0x01D1).
+ */
+void uart_ctrl_send_sensor_data(float temp_c, float hum_pct);
+
+/**
+ * @brief Stuur de huidige UTC-tijd als CMD_TIME_SYNC frame naar de Waveshare.
+ *        Frame: [len=5][0x09][epoch_b3][epoch_b2][epoch_b1][epoch_b0]
+ *        Epoch is big-endian uint32 UTC. Doet niets als de klok nog niet gesynchroniseerd is.
+ */
+void uart_ctrl_send_time_sync(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -3,6 +3,7 @@ set(COMPONENT_SRCS
     ./i2c_slave_ctrl.c
     ./uart_ctrl.c
     ./audio_level_tap.c
+    ./aht20.c
 )
 set(COMPONENT_ADD_INCLUDEDIRS ".")
 

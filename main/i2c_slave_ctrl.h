@@ -110,6 +110,10 @@ typedef enum {
     CMD_STATUS  = 0x06,
     CMD_EQ          = 0x07,  /* [0x07][band:uint8 0-9][gain:int8 dB] */
     CMD_AUDIO_LEVEL = 0x08,  /* [0x08][peak_L:uint8 0-255][peak_R:uint8 0-255] — unsolicited, device->host */
+    CMD_TIME_SYNC        = 0x09,  /* [0x09][epoch_b3][epoch_b2][epoch_b1][epoch_b0] — unsolicited UTC epoch */
+    CMD_REQUEST_TIME     = 0x0A,  /* [0x0A] — host vraagt huidige UTC-tijd op (antwoord: CMD_TIME_SYNC) */
+    CMD_REQUEST_SENSOR   = 0x0C,  /* [0x0C] — host vraagt AHT20 data op */
+    CMD_SENSOR_DATA      = 0x0B,  /* [0x0B][temp_hi][temp_lo][hum_hi][hum_lo] — big-endian int16, 1/10 eenheid */
 } i2c_cmd_opcode_t;
 
 /* -- Player status codes (returned on CMD_STATUS read) ----- */

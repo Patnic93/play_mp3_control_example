@@ -1,21 +1,25 @@
-﻿# NPO Radio 2 Internet Stream Player with I2C Control
+﻿# ESP32-LyraT Internet Radio Player with UART/I2C Control
 
-ESP32 LyraT audio player that streams NPO Radio 2 (or any HTTP MP3 stream) over WiFi.
-A front-end microcontroller can control playback via I2C.
+ESP32-LyraT V4.3 audio player dat een HTTP MP3 stream afspeelt over WiFi.
+Een Waveshare ESP32-S3 front-end stuurt de speler aan via UART.
+De LyraT stuurt ook temperature- en vochtigheidsmeting (AHT20 sensor) terug naar de Waveshare.
 
 ## Features
 
-- Streams live internet radio over WiFi (HTTP/HTTPS MP3)
-- Default stream: `http://icecast.omroep.nl/radio2-bb-mp3` (NPO Radio 2)
-- Physical buttons on the LyraT board for play/pause/stop/volume
-- I2C slave interface for front-end control (change stream URL, volume, play/pause/stop)
-- Status readback over I2C (playing / paused / stopped / error + current volume)
+- Streamt live internetradio via WiFi (HTTP/HTTPS MP3)
+- Standaard stream: `http://icecast.omroep.nl/radio2-bb-mp3` (NPO Radio 2)
+- Fysieke knoppen op het LyraT-board (play/pause/stop/volume)
+- **UART interface** voor aansturing door Waveshare front-end (URL, volume, play/pause/stop, EQ)
+- Status-terugkoppeling over UART (playing / paused / stopped / error + volume)
+- **AHT20 sensor** (I2C, GPIO 18/23): temperatuur en vochtigheid, op verzoek teruggestuurd via UART
+- Captive portal WiFi setup: als de WiFi verbinding mislukt, start de LyraT een AP (`playmp3_setup_XXXXXX`) zodat credentials ingesteld kunnen worden via een browser
+- WiFi credentials worden opgeslagen in NVS en na herstart automatisch hergebruikt
 
 ## Hardware
 
 - **Board:** ESP32-LyraT V4.3
 - **ESP-IDF:** v5.5.3
-- **ESP-ADF:** located at `C:\esp\esp-adf` (set `ADF_PATH`)
+- **ESP-ADF:** `C:\esp\esp-adf` (stel `ADF_PATH` in)
 
 ## Build & Flash
 
@@ -23,280 +27,94 @@ A front-end microcontroller can control playback via I2C.
 idf.py -p PORT flash monitor
 ```
 
-Or use the ESP-IDF extension in VS Code.
+Of gebruik de ESP-IDF extensie in VS Code.
 
-## Configuration
+## WiFi instellen
 
-WiFi credentials and default stream URL are defined at the top of
-`main/play_mp3_control_example.c`:
+WiFi credentials staan in `main/wifi_secrets.h` (git-ignored, niet in repo):
 
 ```c
-LyraT GPIO 18 (SDA)  ---[4.7kOhm pull-up to 3.3V]---  Front-end SDA
-LyraT GPIO 23 (SCL)  ---[4.7kOhm pull-up to 3.3V]---  Front-end SCL
-#define RADIO_STREAM_URL "http://icecast.omroep.nl/radio2-bb-mp3"
+#define LYRAT_WIFI_SSID "jouw-ssid"
+#define LYRAT_WIFI_PWD  "jouw-wachtwoord"
 ```
 
-## Physical Button Controls (LyraT)
+Als de verbinding mislukt of `wifi_secrets.h` nog niet ingevuld is, start de LyraT automatisch een captive portal AP (`playmp3_setup_XXXXXX`). Verbind met dit netwerk en stel de credentials in via de browser. De credentials worden opgeslagen in NVS.
 
-| Button | Action                        |
-|--------|-------------------------------|
-| Play   | Start / Pause / Resume        |
-| Set    | Stop                          |
-| Mode   | Restart current stream        |
-| Vol+   | Volume up (step +10)          |
-| Vol-   | Volume down (step -10)        |
+## Fysieke knoppen (LyraT)
 
-## I2C Slave Interface
+| Knop  | Actie                         |
+|-------|-------------------------------|
+| Play  | Start / Pause / Resume        |
+| Set   | Stop                          |
+| Mode  | Herstart huidige stream       |
+| Vol+  | Volume omhoog (stap +10)      |
+| Vol-  | Volume omlaag (stap -10)      |
 
-The LyraT acts as an **I2C slave** at address **0x42**.
-A front-end microcontroller (master) can send commands at any time.
+## AHT20 Temperatuur- & vochtigheidssensor
 
-The I2C slave address / pins / port are configurable via `menuconfig`:
+| AHT20 pin | LyraT GPIO |
+|-----------|------------|
+| VIN       | 3.3V       |
+| GND       | GND        |
+| SDA       | GPIO **18** |
+| SCL       | GPIO **23** |
+
+De sensor deelt de I2C-bus met de audiocodec (I2C_NUM_0). De driver hergebruikt de bestaande bus als ADF die al heeft aangemaakt.
+
+De AHT20-waarden worden elke 2 seconden gelogd op de seriële monitor:
+```
+I (1234) AHT20: Temp: 21.4 °C   Vochtigheid: 58.3 %
+```
+
+## UART-communicatieprotocol (Waveshare ↔ LyraT)
+
+**Instellingen:** `115200 baud, 8N1`
+**Transport:** length-prefixed frames — elk bericht begint met één lengte-byte `[LEN]` gevolgd door `LEN` payload bytes.
 
 ```
-menuconfig > Play MP3 Control > I2C Slave Control
+Frame formaat:
+  [LEN:1 byte]  [PAYLOAD: LEN bytes]
 ```
-
-- I2C slave address (7-bit): default `0x42`
-- SDA GPIO: default `18`
-- SCL GPIO: default `23`
-- I2C port: default `I2C_NUM_1`
 
 ### Wiring
 
-```
-LyraT GPIO 18 (SDA)  ---[4.7kOhm pull-up to 3.3V]---  Front-end SDA
-LyraT GPIO 23 (SCL)  ---[4.7kOhm pull-up to 3.3V]---  Front-end SCL
-GND                  ---                               GND
+| Waveshare GPIO | LyraT GPIO | Functie |
+|---|---|---|
+| GPIO 15 (TX) | GPIO 15 (RX) | Commando's Waveshare → LyraT |
+| GPIO 16 (RX) | GPIO 13 (TX) | Antwoorden / events LyraT → Waveshare |
+| GND | GND | Gemeenschappelijke massa |
 
-```
+### Richting: Waveshare → LyraT (commando's)
 
-- I2C address: `0x42` (7-bit)
-- Max speed: 400 kHz
+| Opcode | Naam | Payload | Beschrijving |
+|---|---|---|---|
+| `0x01` | `CMD_PLAY` | _(geen)_ | Start of hervat het afspelen |
+| `0x02` | `CMD_STOP` | _(geen)_ | Stopt het afspelen volledig |
+| `0x03` | `CMD_PAUSE` | _(geen)_ | Pauzeert het afspelen |
+| `0x04` | `CMD_VOLUME` | `[vol:uint8]` | Stel volume in (0–100) |
+| `0x05` | `CMD_SET_URL` | `[len:uint8][url:len bytes]` | Stel stream-URL in en start direct afspelen |
+| `0x06` | `CMD_STATUS` | _(geen)_ | Vraag huidige status + volume op; LyraT antwoordt met STATUS_REPLY |
+| `0x07` | `CMD_EQ` | `[band:uint8 0–9][gain:int8 dB]` | Stel gain in voor één EQ-band (ca. −13…+13 dB) |
+| `0x0A` | `CMD_REQUEST_TIME` | _(geen)_ | Vraagt de LyraT om zijn UTC-tijd te sturen (antwoord: `CMD_TIME_SYNC`) |
+| `0x0C` | `CMD_REQUEST_SENSOR` | _(geen)_ | Vraagt de LyraT om AHT20 temperatuur + vochtigheid (antwoord: `CMD_SENSOR_DATA`) |
 
-### Command Set
+### Richting: LyraT → Waveshare (antwoorden & events)
 
-All commands are sent as a single I2C write transaction.
+| Opcode | Naam | Payload | Beschrijving |
+|---|---|---|---|
+| `0x06` | `STATUS_REPLY` | `[0x06][status:uint8][volume:uint8]` | Antwoord op `CMD_STATUS` |
+| `0x08` | `AUDIO_LEVEL` | `[0x08][peak_L:uint8][peak_R:uint8]` | Unsolicited — audioniveau links/rechts (0–255) voor VU-meter |
+| `0x09` | `CMD_TIME_SYNC` | `[0x09][epoch_b3][epoch_b2][epoch_b1][epoch_b0]` | UTC epoch als big-endian uint32 |
+| `0x0B` | `CMD_SENSOR_DATA` | `[0x0B][temp_hi][temp_lo][hum_hi][hum_lo]` | AHT20 data als big-endian int16, eenheid 1/10 (bijv. `0x00D8` = 21.6 °C, `0x01D1` = 46.5 %) |
 
-#### CMD_PLAY — `0x01`
-Start or resume playback.
-```
-Master writes: [0x01]
-```
+### Statuscodes (in STATUS_REPLY)
 
-#### CMD_STOP — `0x02`
-Stop playback.
-```
-Master writes: [0x02]
-```
-
-#### CMD_PAUSE — `0x03`
-Pause playback.
-```
-Master writes: [0x03]
-```
-
-#### CMD_VOLUME — `0x04`
-Set volume level (0 = mute, 100 = maximum).
-```
-Master writes: [0x04][vol]
-```
-Example - set volume to 75%:
-```
-[0x04][0x4B]
-```
-
-#### CMD_SET_URL — `0x05`
-Set a new HTTP stream URL and start playing immediately.
-```
-Master writes: [0x05][len][url bytes...]
-```
-- `len`: number of URL bytes (1..255)
-- `url bytes`: ASCII characters of the URL, no null terminator needed
-
-Example - switch to NPO Radio 1:
-```
-[0x05][0x26][h][t][t][p][:]...  (38 bytes for the URL)
-```
-
-#### CMD_STATUS — `0x06`
-Request current status. After sending this, the master performs a
-2-byte I2C read. Insert at least 5 ms between write and read.
-
-```
-Master writes: [0x06]
--- wait >= 5 ms --
-Master reads:  [status][volume]
-```
-
-| status byte | meaning  |
-|-------------|----------|
-| `0x00`      | Stopped  |
-| `0x01`      | Playing  |
-| `0x02`      | Paused   |
-| `0xFF`      | Error    |
-
-The status is also updated automatically whenever a command is executed
-or a physical button is pressed, so the master can poll at any time
-without sending `0x06` first.
-
-### Arduino / ESP32 Master Example
-
-> This example targets an Arduino or ESP32 (Arduino framework) acting as I2C master.
-> For a plain ESP32 master, replace `Wire.begin(SDA_PIN, SCL_PIN)` with
-> `i2c_master_init()` from ESP-IDF.
-
-```cpp
-#include <Wire.h>
-
-// Change these to the SDA/SCL pins of your master board
-#define MASTER_SDA_PIN  21
-#define MASTER_SCL_PIN  22
-
-#define LYRAT_ADDR      0x42   // 7-bit I2C address of the LyraT slave
-
-// Player status codes returned by lyrat_get_status()
-#define LYRAT_STOPPED   0x00
-#define LYRAT_PLAYING   0x01
-#define LYRAT_PAUSED    0x02
-#define LYRAT_ERROR     0xFF
-
-// -----------------------------------------------------------------------
-// Command helpers
-// -----------------------------------------------------------------------
-
-// CMD_PLAY (0x01) - start or resume playback
-void lyrat_play() {
-    Wire.beginTransmission(LYRAT_ADDR);
-    Wire.write(0x01);
-    Wire.endTransmission();
-}
-
-// CMD_STOP (0x02) - stop playback
-void lyrat_stop() {
-    Wire.beginTransmission(LYRAT_ADDR);
-    Wire.write(0x02);
-    Wire.endTransmission();
-}
-
-// CMD_PAUSE (0x03) - pause playback
-void lyrat_pause() {
-    Wire.beginTransmission(LYRAT_ADDR);
-    Wire.write(0x03);
-    Wire.endTransmission();
-}
-
-// CMD_VOLUME (0x04) - set volume 0 (mute) .. 100 (max)
-void lyrat_set_volume(uint8_t vol) {
-    if (vol > 100) vol = 100;
-    Wire.beginTransmission(LYRAT_ADDR);
-    Wire.write(0x04);
-    Wire.write(vol);
-    Wire.endTransmission();
-}
-
-// CMD_SET_URL (0x05) - set HTTP stream URL and start playing immediately
-// url must be a null-terminated ASCII string, max 255 characters
-void lyrat_set_url(const char* url) {
-    uint8_t len = (uint8_t)strlen(url);
-    Wire.beginTransmission(LYRAT_ADDR);
-    Wire.write(0x05);
-    Wire.write(len);
-    Wire.write((const uint8_t*)url, len);
-    Wire.endTransmission();
-}
-
-// CMD_STATUS (0x06) - read current status byte and volume
-// Returns: LYRAT_STOPPED / LYRAT_PLAYING / LYRAT_PAUSED / LYRAT_ERROR
-// *volume receives the current volume level (0-100)
-uint8_t lyrat_get_status(uint8_t* volume) {
-    Wire.beginTransmission(LYRAT_ADDR);
-    Wire.write(0x06);
-    Wire.endTransmission(true);
-
-    delay(5);  // give the LyraT at least 5 ms to prepare the reply
-
-    uint8_t n = Wire.requestFrom((uint8_t)LYRAT_ADDR, (uint8_t)2);
-    if (n < 2) {
-        if (volume) *volume = 0;
-        return LYRAT_ERROR;
-    }
-    uint8_t status = Wire.read();
-    if (volume) *volume = Wire.read();
-    return status;
-}
-
-// -----------------------------------------------------------------------
-// Arduino sketch
-// -----------------------------------------------------------------------
-
-void setup() {
-    Serial.begin(115200);
-
-    // For ESP32 boards pass the SDA/SCL pins; for standard Arduino omit them
-    Wire.begin(MASTER_SDA_PIN, MASTER_SCL_PIN);
-    Wire.setClock(400000);   // 400 kHz Fast Mode
-
-    delay(500);  // wait for LyraT to boot
-
-    Serial.println("Connecting to LyraT...");
-
-    // Start with volume at 60 and play the default NPO Radio 2 stream
-    lyrat_set_volume(60);
-    lyrat_play();
-    Serial.println("Play command sent.");
-}
-
-// Status labels for Serial output
-static const char* status_str(uint8_t s) {
-    switch (s) {
-        case LYRAT_STOPPED: return "STOPPED";
-        case LYRAT_PLAYING: return "PLAYING";
-        case LYRAT_PAUSED:  return "PAUSED";
-        default:            return "ERROR";
-    }
-}
-
-void loop() {
-    // Poll status every 5 seconds and print to Serial
-    static uint32_t last_poll = 0;
-    if (millis() - last_poll >= 5000) {
-        last_poll = millis();
-        uint8_t vol;
-        uint8_t st = lyrat_get_status(&vol);
-        Serial.printf("Status: %s  Volume: %u\n", status_str(st), vol);
-    }
-
-    // Example: switch to NPO Radio 1 when 'u' is typed in Serial Monitor
-    if (Serial.available()) {
-        char c = Serial.read();
-        if (c == 'u') {
-            lyrat_set_url("http://icecast.omroep.nl/radio1-bb-mp3");
-            Serial.println("Switched to NPO Radio 1");
-        } else if (c == '2') {
-            lyrat_set_url("http://icecast.omroep.nl/radio2-bb-mp3");
-            Serial.println("Switched to NPO Radio 2");
-        } else if (c == 'p') {
-            lyrat_pause();
-            Serial.println("Paused");
-        } else if (c == 'r') {
-            lyrat_play();
-            Serial.println("Resumed");
-        } else if (c == 's') {
-            lyrat_stop();
-            Serial.println("Stopped");
-        } else if (c == '+') {
-            uint8_t vol;
-            lyrat_get_status(&vol);
-            if (vol <= 90) lyrat_set_volume(vol + 10);
-        } else if (c == '-') {
-            uint8_t vol;
-            lyrat_get_status(&vol);
-            if (vol >= 10) lyrat_set_volume(vol - 10);
-        }
-    }
-}
-```
+| Byte | Betekenis |
+|------|-----------|
+| `0x00` | Stopped |
+| `0x01` | Playing |
+| `0x02` | Paused |
+| `0xFF` | Error |
 
 ## Audio Pipeline
 
@@ -304,19 +122,17 @@ void loop() {
 [WiFi] --> [HTTP stream] --> [MP3 decoder] --> [I2S] --> [Codec] --> [Speaker]
 ```
 
-## Project Structure
+## Projectstructuur
 
 ```
 main/
-  play_mp3_control_example.c   - Main application, WiFi, audio pipeline, button handling
-  i2c_slave_ctrl.h             - I2C command definitions and public API
-  i2c_slave_ctrl.c             - I2C slave driver and command parser
+  play_mp3_control_example.c   - Hoofdapplicatie, WiFi, captive portal, audio pipeline, knoppen
+  i2c_slave_ctrl.h/.c          - Opcode-definities en I2C slave driver
+  uart_ctrl.h/.c               - UART driver en command parser / reply sender
+  aht20.h/.c                   - AHT20 temperatuur- en vochtigheidssensor driver
+  wifi_secrets.h               - WiFi credentials (git-ignored, lokaal)
+  wifi_secrets.example.h       - Voorbeeld credentials
 components/
-  my_board/                    - Custom board definition (LyraT V4.3)
+  my_board/                    - Custom board-definitie (LyraT V4.3)
 ```
-
-## Technical Support
-
-- ESP-IDF / ESP-ADF questions: [esp32.com forum](https://esp32.com/viewforum.php?f=20)
-- Bug reports: [GitHub Issues](https://github.com/Patnic93/play_mp3_control_example/issues)
 

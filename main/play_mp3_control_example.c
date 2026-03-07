@@ -26,8 +26,12 @@
 #include "i2c_slave_ctrl.h"
 #include "uart_ctrl.h"
 #include "audio_level_tap.h"
+#include "aht20.h"
 #include "sdkconfig.h"
 #include "esp_http_server.h"
+#include "esp_http_client.h"
+#include <time.h>
+#include <sys/time.h>
 
 #include "lwip/sockets.h"
 #include "lwip/inet.h"
@@ -51,9 +55,8 @@
 
 static const char *TAG = "NPO_RADIO2_STREAM";
 
-// --- WiFi credentials (local secrets) ---
-// Captive portal is uitgeschakeld; credentials komen uit wifi_secrets.h (lokaal, git-ignored).
-// Als wifi_secrets.h ontbreekt, wordt WiFi overgeslagen.
+// --- WiFi credentials ---
+// Op te starten via NVS (ingesteld via captive portal), of als fallback uit wifi_secrets.h.
 #if defined(__has_include)
 #if __has_include("wifi_secrets.h")
 #include "wifi_secrets.h"
@@ -68,11 +71,44 @@ static const char *TAG = "NPO_RADIO2_STREAM";
 #define LYRAT_WIFI_PWD ""
 #endif
 
-static const char *WIFI_SSID = LYRAT_WIFI_SSID;
-static const char *WIFI_PWD  = LYRAT_WIFI_PWD;
+/* Runtime WiFi credentials: geladen uit NVS of uit wifi_secrets.h als fallback */
+static char s_wifi_ssid[33] = LYRAT_WIFI_SSID;
+static char s_wifi_pwd[65]  = LYRAT_WIFI_PWD;
 
-// Captive portal uitschakelen
-#define ENABLE_CAPTIVE_PORTAL 0
+static void wifi_creds_load_nvs(void)
+{
+    nvs_handle_t h;
+    if (nvs_open("wifi_creds", NVS_READONLY, &h) != ESP_OK) {
+        return; /* geen opgeslagen credentials — gebruik defaults */
+    }
+    size_t len = sizeof(s_wifi_ssid);
+    if (nvs_get_str(h, "ssid", s_wifi_ssid, &len) != ESP_OK) {
+        s_wifi_ssid[0] = '\0';
+    }
+    len = sizeof(s_wifi_pwd);
+    if (nvs_get_str(h, "pwd", s_wifi_pwd, &len) != ESP_OK) {
+        s_wifi_pwd[0] = '\0';
+    }
+    nvs_close(h);
+    ESP_LOGI("WIFI", "NVS credentials geladen voor SSID='%s'", s_wifi_ssid);
+}
+
+static void wifi_creds_save_nvs(const char *ssid, const char *pwd)
+{
+    nvs_handle_t h;
+    if (nvs_open("wifi_creds", NVS_READWRITE, &h) != ESP_OK) {
+        ESP_LOGE("WIFI", "NVS open failed");
+        return;
+    }
+    nvs_set_str(h, "ssid", ssid);
+    nvs_set_str(h, "pwd",  pwd ? pwd : "");
+    nvs_commit(h);
+    nvs_close(h);
+    ESP_LOGI("WIFI", "Credentials opgeslagen in NVS voor SSID='%s'", ssid);
+}
+
+// Captive portal: start AP als WiFi STA verbinding mislukt
+#define ENABLE_CAPTIVE_PORTAL 1
 
 static EventGroupHandle_t wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
@@ -83,7 +119,7 @@ static EventGroupHandle_t wifi_event_group;
 static httpd_handle_t s_portal_httpd;
 static TaskHandle_t s_dns_task;
 static volatile bool s_dns_task_stop;
-static wifi_config_t s_portal_sta_cfg;
+static esp_netif_t *s_ap_netif;
 #endif
 static int s_wifi_retry_count;
 
@@ -294,11 +330,11 @@ static esp_err_t portal_post_wifi_handler(httpd_req_t *req)
     }
     (void)form_get_value(body, "pass", pass, sizeof(pass));
 
-    memset(&s_portal_sta_cfg, 0, sizeof(s_portal_sta_cfg));
-    strlcpy((char *)s_portal_sta_cfg.sta.ssid, ssid, sizeof(s_portal_sta_cfg.sta.ssid));
-    strlcpy((char *)s_portal_sta_cfg.sta.password, pass, sizeof(s_portal_sta_cfg.sta.password));
-    /* Be permissive: allow WPA/WPA2 mixed networks; OPEN when no password. */
-    s_portal_sta_cfg.sta.threshold.authmode = (pass[0] == 0) ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA_PSK;
+    /* Sla credentials op in NVS zodat ze na een reboot beschikbaar zijn */
+    wifi_creds_save_nvs(ssid, pass);
+    /* Bijwerken van de runtime globals zodat de reconnect direct de juiste credentials gebruikt */
+    strlcpy(s_wifi_ssid, ssid, sizeof(s_wifi_ssid));
+    strlcpy(s_wifi_pwd,  pass, sizeof(s_wifi_pwd));
 
     size_t pass_len = strlen(pass);
     if (pass_len) {
@@ -362,12 +398,22 @@ static void portal_stop_http(void)
     }
 }
 
-static void captive_portal_start(void)
+static void captive_portal_start(bool wifi_running)
 {
     uint8_t mac[6] = {0};
     ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP));
     char ap_ssid[32];
     snprintf(ap_ssid, sizeof(ap_ssid), "playmp3_setup_%02X%02X%02X", mac[3], mac[4], mac[5]);
+
+    /* Stop WiFi alleen als het al gestart was */
+    if (wifi_running) {
+        esp_wifi_stop();
+    }
+
+    /* Maak AP netif slechts één keer aan */
+    if (s_ap_netif == NULL) {
+        s_ap_netif = esp_netif_create_default_wifi_ap();
+    }
 
     wifi_config_t ap_cfg = {0};
     strlcpy((char *)ap_cfg.ap.ssid, ap_ssid, sizeof(ap_cfg.ap.ssid));
@@ -413,6 +459,98 @@ static void captive_portal_stop(void)
 
 #endif // ENABLE_CAPTIVE_PORTAL
 
+/* -- Tijdsynchronisatie via HTTP Date header (SNTP is uitgeschakeld) -- */
+
+static volatile time_t s_http_parsed_epoch = 0;
+
+static esp_err_t time_http_event_cb(esp_http_client_event_t *evt)
+{
+    if (evt->event_id != HTTP_EVENT_ON_HEADER) return ESP_OK;
+    if (strcasecmp(evt->header_key, "Date") != 0) return ESP_OK;
+
+    /* RFC 7231 formaat: "Sat, 07 Mar 2026 14:30:00 GMT" */
+    int day = 0, year = 0, hour = 0, min = 0, sec = 0;
+    char mon_str[4] = {0};
+    if (sscanf(evt->header_value, "%*3s, %d %3s %d %d:%d:%d",
+               &day, mon_str, &year, &hour, &min, &sec) != 6) return ESP_OK;
+
+    static const char *MONTHS[] = {
+        "Jan","Feb","Mar","Apr","May","Jun",
+        "Jul","Aug","Sep","Oct","Nov","Dec"
+    };
+    int mon = -1;
+    for (int i = 0; i < 12; i++) {
+        if (strcasecmp(mon_str, MONTHS[i]) == 0) { mon = i; break; }
+    }
+    if (mon < 0 || year < 2020) return ESP_OK;
+
+    struct tm tm = {0};
+    tm.tm_mday = day;
+    tm.tm_mon  = mon;
+    tm.tm_year = year - 1900;
+    tm.tm_hour = hour;
+    tm.tm_min  = min;
+    tm.tm_sec  = sec;
+    setenv("TZ", "UTC0", 1);
+    tzset();
+    s_http_parsed_epoch = mktime(&tm);
+    return ESP_OK;
+}
+
+static bool sync_time_via_http(void)
+{
+    static const char *SERVERS[] = {
+        "http://www.google.com",
+        "http://www.cloudflare.com",
+        "http://time.cloudflare.com",
+        NULL
+    };
+    for (int i = 0; SERVERS[i]; i++) {
+        s_http_parsed_epoch = 0;
+        esp_http_client_config_t cfg = {
+            .url           = SERVERS[i],
+            .method        = HTTP_METHOD_HEAD,
+            .timeout_ms    = 6000,
+            .event_handler = time_http_event_cb,
+        };
+        esp_http_client_handle_t client = esp_http_client_init(&cfg);
+        esp_http_client_perform(client);
+        esp_http_client_cleanup(client);
+
+        if (s_http_parsed_epoch > 1577836800L) {
+            time_t epoch = s_http_parsed_epoch;
+            struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+            settimeofday(&tv, NULL);
+            struct tm ti;
+            gmtime_r(&epoch, &ti);
+            ESP_LOGI(TAG, "[TIME] HTTP sync OK via %s: epoch=%lld  UTC=%04d-%02d-%02d %02d:%02d:%02d",
+                     SERVERS[i], (long long)epoch,
+                     ti.tm_year + 1900, ti.tm_mon + 1, ti.tm_mday,
+                     ti.tm_hour, ti.tm_min, ti.tm_sec);
+            return true;
+        }
+        ESP_LOGW(TAG, "[TIME] %s: geen geldige Date header ontvangen", SERVERS[i]);
+    }
+    return false;
+}
+
+static void time_sync_task(void *arg)
+{
+    (void)arg;
+    xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
+    ESP_LOGI(TAG, "[TIME] WiFi verbonden, tijdsync via HTTP starten...");
+
+    for (;;) {
+        if (sync_time_via_http()) {
+            uart_ctrl_send_time_sync();
+            vTaskDelay(pdMS_TO_TICKS(3600000UL));  /* hersync elk uur */
+        } else {
+            ESP_LOGW(TAG, "[TIME] HTTP sync mislukt, opnieuw over 30s");
+            vTaskDelay(pdMS_TO_TICKS(30000));
+        }
+    }
+}
+
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
 {
@@ -438,6 +576,21 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
+static void wifi_connect_sta(void)
+{
+    wifi_config_t sta_cfg = {0};
+    strlcpy((char *)sta_cfg.sta.ssid, s_wifi_ssid, sizeof(sta_cfg.sta.ssid));
+    strlcpy((char *)sta_cfg.sta.password, s_wifi_pwd, sizeof(sta_cfg.sta.password));
+    sta_cfg.sta.threshold.authmode = (s_wifi_pwd[0] != '\0') ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;
+    sta_cfg.sta.pmf_cfg.capable = true;
+    sta_cfg.sta.pmf_cfg.required = false;
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
+    s_wifi_retry_count = 0;
+    xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
+    ESP_ERROR_CHECK(esp_wifi_start());
+}
+
 static void wifi_init_sta_or_portal(void)
 {
     wifi_event_group = xEventGroupCreate();
@@ -460,34 +613,46 @@ static void wifi_init_sta_or_portal(void)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
 
-    if (WIFI_SSID == NULL || WIFI_SSID[0] == 0 || strcmp(WIFI_SSID, "JOUW_SSID_HIER") == 0) {
-        ESP_LOGW(TAG, "WiFi SSID niet ingesteld; captive portal is uit. WiFi wordt overgeslagen.");
-        return;
+    /* Laad eerder via portal opgeslagen credentials uit NVS; fallback = wifi_secrets.h */
+    wifi_creds_load_nvs();
+
+    bool sta_started = false;
+
+    if (s_wifi_ssid[0] != '\0' && strcmp(s_wifi_ssid, "JOUW_SSID_HIER") != 0) {
+        ESP_LOGI(TAG, "Connecting to WiFi SSID='%s'", s_wifi_ssid);
+        wifi_connect_sta();
+        sta_started = true;
+
+        EventBits_t bits = xEventGroupWaitBits(wifi_event_group,
+                                               WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+                                               pdFALSE, pdFALSE, pdMS_TO_TICKS(20000));
+        if (bits & WIFI_CONNECTED_BIT) {
+            ESP_LOGI(TAG, "WiFi connected");
+            return;
+        }
+        ESP_LOGW(TAG, "WiFi connect failed, starting captive portal...");
+    } else {
+        ESP_LOGW(TAG, "Geen WiFi SSID ingesteld, start captive portal direct.");
     }
 
-    wifi_config_t sta_cfg = {0};
-    strlcpy((char *)sta_cfg.sta.ssid, WIFI_SSID, sizeof(sta_cfg.sta.ssid));
-    strlcpy((char *)sta_cfg.sta.password, WIFI_PWD ? WIFI_PWD : "", sizeof(sta_cfg.sta.password));
-    sta_cfg.sta.threshold.authmode = (WIFI_PWD && WIFI_PWD[0] != 0) ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;
-    sta_cfg.sta.pmf_cfg.capable = true;
-    sta_cfg.sta.pmf_cfg.required = false;
+    /* STA mislukt of geen credentials — start captive portal */
+    captive_portal_start(sta_started);
+    xEventGroupWaitBits(wifi_event_group, WIFI_PORTAL_CRED_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+    captive_portal_stop();
 
-    ESP_LOGI(TAG, "Connecting to WiFi SSID='%s' (captive portal disabled)", WIFI_SSID);
-    xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
-    s_wifi_retry_count = 0;
-    ESP_ERROR_CHECK(esp_wifi_start());
+    /* Terug naar STA met de via portal + NVS opgeslagen credentials */
+    ESP_LOGI(TAG, "Portal credentials ontvangen, verbinden met SSID='%s'", s_wifi_ssid);
+    esp_wifi_stop();
+    wifi_connect_sta();
 
-    EventBits_t bits = xEventGroupWaitBits(wifi_event_group,
-                                           WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                           pdFALSE, pdFALSE, pdMS_TO_TICKS(20000));
-    if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG, "WiFi connected");
-        return;
+    EventBits_t bits2 = xEventGroupWaitBits(wifi_event_group,
+                                            WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+                                            pdFALSE, pdFALSE, pdMS_TO_TICKS(20000));
+    if (bits2 & WIFI_CONNECTED_BIT) {
+        ESP_LOGI(TAG, "WiFi verbonden na portal setup");
+    } else {
+        ESP_LOGE(TAG, "WiFi verbinding mislukt na portal setup");
     }
-
-    ESP_LOGE(TAG, "WiFi connect failed and captive portal is disabled");
 }
 
 /* -- Command queue (shared between control interface and app_main) -- */
@@ -514,6 +679,8 @@ void app_main(void)
     esp_log_level_set("*", ESP_LOG_WARN);
     esp_log_level_set(TAG, ESP_LOG_INFO);
     esp_log_level_set("I2C_SLAVE", ESP_LOG_INFO);
+    esp_log_level_set("AHT20", ESP_LOG_INFO);
+    esp_log_level_set("UART_CTRL", ESP_LOG_INFO);
 
     ESP_LOGI(TAG, "[ 0 ] Initialize control interface, NVS and WiFi");
     /* Create command queue before init so control task can start receiving */
@@ -537,12 +704,22 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
     wifi_init_sta_or_portal();
 
+    /* wifi_event_group is nu aangemaakt — pas dan time_sync_task starten */
+    xTaskCreate(time_sync_task, "time_sync", 3072, NULL, 3, NULL);
+
     ESP_LOGI(TAG, "[ 1 ] Start audio codec chip");
     audio_board_handle_t board_handle = audio_board_init();
     audio_hal_ctrl_codec(board_handle->audio_hal, AUDIO_HAL_CODEC_MODE_DECODE, AUDIO_HAL_CTRL_START);
 
     int player_volume;
     audio_hal_get_volume(board_handle->audio_hal, &player_volume);
+
+    // AHT20 tijdelijk uitgeschakeld (sensor losgekoppeld)
+    // ESP_LOGI(TAG, "[ 1b] Start AHT20 temp/humidity sensor");
+    // esp_err_t aht20_err = aht20_start();
+    // if (aht20_err != ESP_OK) {
+    //     ESP_LOGW(TAG, "AHT20 niet gevonden of niet verbonden (GPIO SDA=18, SCL=23): %s", esp_err_to_name(aht20_err));
+    // }
 
     ESP_LOGI(TAG, "[ 2 ] Create audio pipeline, add all elements to pipeline, and subscribe pipeline event");
     audio_pipeline_cfg_t pipeline_cfg = DEFAULT_AUDIO_PIPELINE_CONFIG();
